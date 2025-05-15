@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>World Series of Knuckles</title>
+    <link rel="icon" type="image/png" href="knuckles.png">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles/main.css"> 
+</head>
+<body>
+    <div id="initial-setup-overlay" style="display: none;">
+        <div>
+            <h2>Welcome to World Series of Knuckles!</h2>
+            <p>To get started, please select the main application directory. A 'Data' subfolder will be created/used within it to store game data.</p>
+            <button id="setup-data-dir-button">Select Application Directory</button>
+            <p style="font-size: 0.8em; color: var(--text-secondary); margin-top: 15px;">
+                This app uses the File System Access API. Your browser will ask for permission.
+            </p>
+        </div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1><img src="knuckles.png" alt="Knuckles Icon" class="logo"> World Series of Knuckles</h1>
+        </header>
+
+        <nav>
+            <button id="nav-dashboard" class="nav-button active" onclick="showTab('dashboard')">Dashboard</button>
+            <button id="nav-entry" class="nav-button" onclick="showTab('data-entry')">Enter New Data</button>
+            <button id="nav-manage-data" class="nav-button" onclick="showTab('manage-data')">Manage Data</button>
+        </nav>
+
+        <div id="dashboard" class="tab-content active">
+            <h2>Dashboard</h2>
+            <div class="dashboard-controls">
+                <select id="week-selector" onchange="handleWeekSelectionChange()"></select>
+            </div>
+            
+            <!-- New container for All Time Player Progress Chart -->
+            <div id="all-time-player-progress-chart-container" style="margin-bottom: 30px; display: none;">
+                <h3>All Time Player Net Progression</h3>
+                <div style="position: relative; height: 450px; max-height:60vh; width:100%; background-color: var(--bg-tertiary); padding: 15px; border-radius: 6px; border: 1px solid var(--border-color); margin-top:10px;">
+                    <canvas id="all-time-player-progress-chart"></canvas>
+                </div>
+            </div>
+            
+            <div id="dashboard-poker-stats">
+            <div id="overall-stats" class="stats-grid"></div>
+            <h3>Players</h3>
+                <input type="text" id="player-search" placeholder="Search player..." onkeyup="renderPlayerList(getSelectedWeekId())">
+            <div id="player-list"></div>
+            <div id="player-details-section" style="margin-top: 30px; display: none;">
+                <h3>
+                    <img id="player-detail-avatar" class="player-avatar" src="knuckles.png" alt="Player Avatar">
+                        <span id="player-detail-name"></span> - Stats (<span id="player-detail-context">All Time</span>)
+                </h3>
+                <div id="player-specific-stats" class="stats-grid"></div>
+                    <h4>Winnings/Losses Graph</h4>
+                    <div id="player-chart-container">
+                <canvas id="player-chart"></canvas>
+                    </div>
+                    <h4 style="margin-top: 25px;">Games Played by <span id="player-detail-name-games"></span> (<span id="player-detail-games-context">All Time</span>)</h4>
+                <div id="player-games-table-container"></div>
+                </div>
+            </div>
+
+            <!-- New container for the weekly buy-in/cash-out chart -->
+            <div id="weekly-performance-chart-container" style="margin-top: 30px; display: none;">
+                <h3>Weekly Player Performance (Buy-ins vs. Cash-outs)</h3>
+                <div id="player-chart-container-weekly" style="position: relative; height: 400px; max-height:50vh; width:100%; background-color: var(--bg-tertiary); padding: 15px; border-radius: 6px; border: 1px solid var(--border-color); margin-top:10px;">
+                    <canvas id="weekly-performance-chart"></canvas>
+                </div>
+            </div>
+
+            <div id="all-time-drink-stats-container" style="margin-top: 30px; display: none;">
+                <!-- Content will be populated by renderAllTimeDrinkStats() -->
+            </div>
+
+            <div id="dashboard-drink-stats" style="display:none;">
+                <h3>Mystery Drink Stats for <span id="drink-stats-week-name"></span></h3>
+                <div id="week-drink-info-container">
+                    <!-- Week's drink name and image will go here -->
+                </div>
+                <h4>Player Ratings:</h4>
+                <p>Average Rating: <strong id="avg-drink-rating">N/A</strong></p>
+                <div id="player-drink-ratings-display"></div>
+            </div>
+        </div>
+
+        <div id="data-entry" class="tab-content">
+            <h2>Enter New Game Session Data</h2>
+            <form id="data-entry-form" onsubmit="event.preventDefault(); saveEnteredSessionData();">
+                <div class="form-group">
+                    <label for="session-name">Session Name:</label>
+                    <input type="text" id="session-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="session-date">Session Date:</label>
+                    <input type="date" id="session-date" required>
+                </div>
+                <hr>
+                <h3>This Week's Mystery Drink (Optional)</h3>
+                <div class="form-group">
+                    <label for="week-mystery-drink-name">Drink Name:</label>
+                    <input type="text" id="week-mystery-drink-name">
+                </div>
+                <div class="form-group">
+                    <label for="week-drink-image">Drink Image:</label>
+                    <input type="file" id="week-drink-image" accept="image/png, image/jpeg">
+                </div>
+                <hr>
+                <h3>Players in this Session</h3>
+                <div id="player-entries-container"></div>
+                <button onclick="addPlayerEntryField()">Add Player to Session</button>
+                <button onclick="saveSessionDataFS()" class="secondary">Save Game Session</button>
+                <hr>
+            </form>
+        </div>
+
+        <div id="manage-data" class="tab-content">
+            <h2>Manage Data</h2>
+            <div id="data-management-controls" style="margin-bottom: 20px;">
+                <label for="manage-data-week-selector">Select Week to Manage:</label>
+                <select id="manage-data-week-selector"></select>
+            </div>
+
+            <div id="edit-week-details-form" style="display: none; border: 1px solid var(--border-color); padding: 20px; border-radius: 8px; background-color: var(--bg-tertiary);">
+                <h3>Edit Week Details</h3>
+                <div class="form-group">
+                    <label for="manage-session-name">Session Name:</label>
+                    <input type="text" id="manage-session-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="manage-session-date">Session Date:</label>
+                    <input type="date" id="manage-session-date" required>
+                </div>
+                <hr>
+                <h4>Mystery Drink for this Week</h4>
+                <div class="form-group">
+                    <label for="manage-week-mystery-drink-name">Drink Name:</label>
+                    <input type="text" id="manage-week-mystery-drink-name">
+                </div>
+                <div class="form-group">
+                    <label for="manage-week-drink-image">New Drink Image (Optional, replaces existing):</label>
+                    <input type="file" id="manage-week-drink-image" accept="image/png, image/jpeg">
+                    <div id="current-week-drink-image-display" style="margin-top: 10px;">
+                        <!-- Current image will be shown here by JS -->
+                    </div>
+                </div>
+                <hr>
+                <h4>Players in this Session</h4>
+                <div id="manage-player-entries-container" style="margin-bottom: 15px;">
+                    <!-- Player edit fields will be dynamically inserted here by JS -->
+                </div>
+                <button type="button" onclick="addPlayerEntryFieldInManageForm()" style="margin-bottom:15px;">Add Player to This Session</button>
+                <hr>
+                <button id="save-week-changes-button" class="secondary">Save Week Changes</button>
+                <button id="delete-this-week-button" class="danger" style="margin-left: 10px;">Delete This Week</button>
+            </div>
+
+            <hr style="margin-top: 40px; margin-bottom: 30px;">
+
+            <div id="manage-player-avatars-section">
+                <h3>Manage Player Avatars</h3>
+                <div class="form-group">
+                    <label for="manage-avatar-player-selector">Select Player:</label>
+                    <select id="manage-avatar-player-selector"></select>
+                </div>
+                <div id="current-player-avatar-display" style="margin-bottom: 15px;">
+                    <!-- Current player avatar shown here -->
+                </div>
+                <div class="form-group">
+                    <label for="new-player-avatar-input">Upload New Avatar (PNG, JPG):</label>
+                    <input type="file" id="new-player-avatar-input" accept="image/png, image/jpeg">
+                </div>
+                <button id="save-player-avatar-button">Save Avatar</button>
+            </div>
+
+            <hr style="margin-top: 40px; margin-bottom: 30px;">
+
+            <h3>Data Export Options</h3>
+            <div style="margin-bottom: 20px;">
+                <button onclick="exportAllDataToCSV()" id="export-csv-button">Export All Session Data to CSV</button>
+                <button onclick="exportAllDataZIPPlaceholder()" id="export-zip-button" style="margin-left: 10px;">Export All Data as ZIP (Manual)</button>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="scripts/app.js" defer></script>
+</body>
+</html>

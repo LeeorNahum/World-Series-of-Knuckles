@@ -1,0 +1,45 @@
+{
+  "uuid": "10af7d51-fe40-4f1d-95a6-b5b179e59848",
+  "name": "Poker Week 2",
+  "date": "2025-06-08",
+  "weekMysteryDrinkName": "Sprite Cranberry",
+  "players": [
+    {
+      "PlayerName": "Alex",
+      "BuyIn": 30,
+      "CashOut": 50,
+      "MysteryDrinkRating": 8
+    },
+    {
+      "PlayerName": "Ben",
+      "BuyIn": 30,
+      "CashOut": 20,
+      "MysteryDrinkRating": 7
+    },
+    {
+      "PlayerName": "Chloe",
+      "BuyIn": 40,
+      "CashOut": 60,
+      "MysteryDrinkRating": 9
+    },
+    {
+      "PlayerName": "David",
+      "BuyIn": 20,
+      "CashOut": 10,
+      "MysteryDrinkRating": 6
+    },
+    {
+      "PlayerName": "Emma",
+      "BuyIn": 30,
+      "CashOut": 5,
+      "MysteryDrinkRating": 5
+    },
+    {
+      "PlayerName": "Bob",
+      "BuyIn": 20,
+      "CashOut": 25,
+      "MysteryDrinkRating": 3
+    }
+  ],
+  "weekMysteryDrinkImagePath": "drink_image.png"
+}

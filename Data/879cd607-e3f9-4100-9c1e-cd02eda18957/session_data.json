@@ -1,0 +1,39 @@
+{
+  "uuid": "879cd607-e3f9-4100-9c1e-cd02eda18957",
+  "name": "Poker Finals!",
+  "date": "2025-06-22",
+  "weekMysteryDrinkName": "Ghost Sour Patch Flavor",
+  "players": [
+    {
+      "PlayerName": "Alex",
+      "BuyIn": 20,
+      "CashOut": 25,
+      "MysteryDrinkRating": 7
+    },
+    {
+      "PlayerName": "Ben",
+      "BuyIn": 15,
+      "CashOut": 10,
+      "MysteryDrinkRating": 6
+    },
+    {
+      "PlayerName": "Chloe",
+      "BuyIn": 30,
+      "CashOut": 35,
+      "MysteryDrinkRating": 8
+    },
+    {
+      "PlayerName": "David",
+      "BuyIn": 15,
+      "CashOut": 10,
+      "MysteryDrinkRating": 5
+    },
+    {
+      "PlayerName": "Emma",
+      "BuyIn": 20,
+      "CashOut": 20,
+      "MysteryDrinkRating": 7
+    }
+  ],
+  "weekMysteryDrinkImagePath": "drink_image.png"
+}
