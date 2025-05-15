@@ -4,6 +4,8 @@ The World Series of Knuckles is a vibrant and engaging web app built to manage a
 
 Track your poker league's stats, relive game nights, and see who's truly the "King of Knuckles"! This web app helps you manage poker sessions, player performance, and even the week's mystery drink, all stored locally on your computer.
 
+![image](https://github.com/user-attachments/assets/16e90775-2123-4b8e-9eda-89f945684fea)
+
 ## Key Features
 
 * **Detailed Session Logging:** Record game dates, player buy-ins, cash-outs, and net results.
