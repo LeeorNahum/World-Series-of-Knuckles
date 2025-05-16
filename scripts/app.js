@@ -58,73 +58,120 @@ async function openDB() { return new Promise((resolve, reject) => { const reques
 async function saveHandle(key, handle) { const db = await openDB(); return new Promise((resolve, reject) => { const transaction = db.transaction(STORE_NAME, 'readwrite'); const store = transaction.objectStore(STORE_NAME); const request = store.put(handle, key); request.onsuccess = () => resolve(); request.onerror = () => reject(request.error); }); }
 async function getHandle(key) { const db = await openDB(); return new Promise((resolve, reject) => { const transaction = db.transaction(STORE_NAME, 'readonly'); const store = transaction.objectStore(STORE_NAME); const request = store.get(key); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
         
-async function getAppBaseDirHandle() {
-    if (appBaseDirHandle) return appBaseDirHandle;
-    try {
-        const storedHandle = await getHandle(ROOT_DIR_HANDLE_KEY);
-        if (storedHandle) {
-            if (await storedHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
-                appBaseDirHandle = storedHandle;
-                return appBaseDirHandle;
-            } else if (await storedHandle.requestPermission({ mode: 'readwrite' }) === 'granted') {
-                appBaseDirHandle = storedHandle;
-                return appBaseDirHandle;
+async function getAppBaseDirHandle(forceNew = false) {
+    if (appBaseDirHandle && !forceNew) return appBaseDirHandle;
+    
+    const previousHandle = appBaseDirHandle; // Store previous handle in case forceNew is cancelled
+    if (forceNew) {
+        appBaseDirHandle = null; // Clear global handle to ensure we try to get a new one
+    }
+
+    // Try to retrieve from IndexedDB only if not forcing a new selection and no current handle
+    if (!appBaseDirHandle && !forceNew) { 
+        try {
+            const storedHandle = await getHandle(ROOT_DIR_HANDLE_KEY);
+            if (storedHandle) {
+                if (await storedHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
+                    appBaseDirHandle = storedHandle;
+                    return appBaseDirHandle;
+                } else if (await storedHandle.requestPermission({ mode: 'readwrite' }) === 'granted') {
+                    appBaseDirHandle = storedHandle;
+                    return appBaseDirHandle;
+                }
+            }
+        } catch (e) {
+            console.error("Error retrieving stored app base handle:", e);
+        }
+    }
+
+    // If we still don't have a handle (either initial load, or forceNew, or stored handle failed/denied)
+    // then show the directory picker.
+    if (!appBaseDirHandle || forceNew) {
+        try {
+            console.log("Requesting directory picker for app base directory...");
+            const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            await saveHandle(ROOT_DIR_HANDLE_KEY, handle);
+            appBaseDirHandle = handle; // Set the new handle
+            initialSetupOverlay.style.display = 'none'; 
+            return appBaseDirHandle;
+        } catch (err) {
+            console.error('User cancelled directory picker or error selecting app base directory:', err);
+            // If forcing a new one and user cancelled, revert to previous if it existed, otherwise show overlay.
+            if (forceNew) {
+                appBaseDirHandle = previousHandle; // Revert to the handle before this forceNew attempt
+                // No alert here, handleChangeDataFolderRequest will handle it.
+                if (!appBaseDirHandle) { // If there was no previous handle either (e.g. initial setup truly cancelled)
+                    initialSetupOverlay.style.display = 'flex';
+                }
+                return null; // Indicate cancellation of the forced new selection
+            } else {
+                // Standard initial setup failure
+                alert("Selection of the main application directory is required. A 'Data' subfolder will be used inside it.");
+                initialSetupOverlay.style.display = 'flex'; 
+                return null;
             }
         }
-    } catch (e) {
-        console.error("Error retrieving stored app base handle:", e);
     }
-    try {
-        console.log("Requesting directory picker for app base directory...");
-        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        await saveHandle(ROOT_DIR_HANDLE_KEY, handle);
-        appBaseDirHandle = handle;
-        return appBaseDirHandle;
-    } catch (err) {
-        console.error('User cancelled directory picker or error selecting app base directory:', err);
-        alert("Selection of the main application directory is required. A 'Data' subfolder will be used inside it.");
-        return null;
-    }
+    return appBaseDirHandle; // Should ideally not be reached if logic is correct, but as a fallback.
 }
 
-async function getDataDirHandle() {
+async function getDataDirHandle(createIfNeeded = false) {
     const baseHandle = await getAppBaseDirHandle();
     if (!baseHandle) return null;
     try {
-        const dataHandle = await baseHandle.getDirectoryHandle('Data', { create: true });
+        // Use createIfNeeded when calling getDirectoryHandle
+        const dataHandle = await baseHandle.getDirectoryHandle('Data', { create: createIfNeeded });
         return dataHandle;
     } catch (e) {
-        console.error("Error getting/creating 'Data' directory handle:", e);
-        alert("Could not access or create the 'Data' subdirectory. Please ensure permissions are correct.");
+        // If createIfNeeded is false and directory doesn't exist, this might throw.
+        // We only want to log/alert if it's an unexpected error or if creation was attempted.
+        if (createIfNeeded || e.name !== 'NotFoundError') {
+            console.error(`Error getting${createIfNeeded ? '/creating' : ''} 'Data' directory handle:`, e);
+            alert(`Could not access${createIfNeeded ? ' or create' : ''} the 'Data' subdirectory. Please ensure permissions are correct and the directory exists if not creating.`);
+        } else {
+            // console.info("'Data' directory not found, and createIfNeeded is false."); // Optional: for debugging
+        }
         return null;
     }
 }
 
-async function getPlayersDirHandle() {
+async function getPlayersDirHandle(createIfNeeded = false) {
     const baseHandle = await getAppBaseDirHandle();
     if (!baseHandle) {
         console.error("Application base directory handle not available for Players Directory.");
         return null;
     }
     try {
-        const playersDirHandle = await baseHandle.getDirectoryHandle('Data', { create: true })
-                                         .then(dataDir => dataDir.getDirectoryHandle('Players', { create: true }));
+        // Ensure Data directory is potentially created first if we need to create Players
+        const dataDir = await baseHandle.getDirectoryHandle('Data', { create: createIfNeeded });
+        if (!dataDir) { // If Data dir couldn't be obtained/created
+             if (createIfNeeded) console.error("Could not get/create Data directory to create Players directory.");
+             return null;
+        }
+        const playersDirHandle = await dataDir.getDirectoryHandle('Players', { create: createIfNeeded });
         return playersDirHandle;
     } catch (e) {
-        console.error("Error getting/creating 'Data/Players' directory handle:", e);
-        alert("Could not access or create the 'Data/Players' subdirectory.");
+        if (createIfNeeded || e.name !== 'NotFoundError') {
+            console.error(`Error getting${createIfNeeded ? '/creating' : ''} 'Data/Players' directory handle:`, e);
+            alert(`Could not access${createIfNeeded ? ' or create' : ''} the 'Data/Players' subdirectory.`);
+        } else {
+            // console.info("'Data/Players' directory not found, and createIfNeeded is false."); // Optional: for debugging
+        }
         return null;
     }
 }
 
 async function loadAllWeekDataFromFS() {
     allWeekData = [];
-    const dataDirHandle = await getDataDirHandle();
+    const dataDirHandle = await getDataDirHandle(false); // Don't create if not there
     if (!dataDirHandle) {
-        initialSetupOverlay.style.display = 'flex';
-        return;
+        // If Data dir doesn't exist, it's not an error for loading, just means no data.
+        // The initialSetupOverlay logic will be handled by initializeApp based on appBaseDirHandle
+        console.info("'Data' directory not found. No data loaded.");
+        buildCanonicalPlayerNameMap(); // Ensure map is cleared/empty
+        return; // Exit early, allWeekData is empty
     }
-    initialSetupOverlay.style.display = 'none'; 
+    // initialSetupOverlay.style.display = 'none'; // This should be managed by initializeApp
     try {
         for await (const entry of dataDirHandle.values()) {
             if (entry.kind === 'directory' && entry.name !== 'Players') { // Folder name is UUID
@@ -165,8 +212,11 @@ async function loadAllWeekDataFromFS() {
 }
 
 async function saveWeekDataToFS(weekData) { // This is the low-level save function
-    const dataDirHandle = await getDataDirHandle();
-    if (!dataDirHandle) return false;
+    const dataDirHandle = await getDataDirHandle(true); // CREATE Data dir if not exists
+    if (!dataDirHandle) {
+        alert("Failed to get or create the main 'Data' directory. Cannot save session.");
+        return false;
+    }
 
     if (!weekData.uuid) { // If it's a new session, generate UUID
         weekData.uuid = generateUUID();
@@ -229,20 +279,39 @@ window.onload = async () => {
 };
 
 async function initializeApp() {
-    await loadAllWeekDataFromFS(); 
-    if (!appBaseDirHandle && allWeekData.length === 0) { 
-        const tempHandle = await getHandle(ROOT_DIR_HANDLE_KEY);
-        if (!tempHandle) {
-            initialSetupOverlay.style.display = 'flex'; 
-            return;
-        }
+    // Try to get the base directory handle first. This might show the picker.
+    // If a handle is obtained (or was already there), hide the overlay.
+    // If not (e.g., user cancels picker), getAppBaseDirHandle itself will show alert and overlay might stay.
+    appBaseDirHandle = await getAppBaseDirHandle(); 
+
+    if (!appBaseDirHandle) {
+        initialSetupOverlay.style.display = 'flex'; // Show overlay if no base dir selected
+        return; // Stop initialization if no base directory is set
     }
-    initialSetupOverlay.style.display = 'none';
+    initialSetupOverlay.style.display = 'none'; // Hide if we have a base dir
+
+    await loadAllWeekDataFromFS(); 
+    // No longer need this check as loadAllWeekDataFromFS handles no Data dir case
+    // if (!appBaseDirHandle && allWeekData.length === 0) { 
+    //     const tempHandle = await getHandle(ROOT_DIR_HANDLE_KEY);
+    //     if (!tempHandle) {
+    //         initialSetupOverlay.style.display = 'flex'; 
+    //         return;
+    //     }
+    // }
     
     populateWeekSelector();
+    initializeAvatarManagementSection(); // Moved up to ensure map is ready
     showTab('dashboard'); 
     prepareNewSessionForm();
     renderManageDataList();
+    // Add event listener for the new button
+    const changeDataFolderButton = document.getElementById('change-data-folder-button');
+    if (changeDataFolderButton) {
+        changeDataFolderButton.onclick = handleChangeDataFolderRequest;
+    } else {
+        console.warn("Change Data Folder button not found during initialization.");
+    }
 }
         
 function prepareNewSessionForm() {
@@ -990,16 +1059,29 @@ async function loadPlayerAvatarForEditing(canonicalPlayerName) {
 
 async function savePlayerAvatar() {
     const selectedCanonicalPlayerName = manageAvatarPlayerSelector.value;
-    if (!selectedCanonicalPlayerName) { alert("Please select a player first."); return; }
-    const avatarFile = newPlayerAvatarInput.files[0];
-    if (!avatarFile) { alert("Please select an image file to upload."); return; }
-    const playersDir = await getPlayersDirHandle();
-    if (!playersDir) { alert("Could not access the Players directory. Avatar cannot be saved."); return; }
+    const fileInput = newPlayerAvatarInput;
+
+    if (!selectedCanonicalPlayerName) {
+        alert("Please select a player.");
+        return;
+    }
+    if (fileInput.files.length === 0) {
+        alert("Please select an image file to upload.");
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const playersDir = await getPlayersDirHandle(true); // CREATE Players dir if not exists
+
+    if (!playersDir) {
+        alert("Could not access or create the 'Data/Players' directory. Avatar cannot be saved.");
+        return;
+    }
     const fileName = sanitizeForFileName(selectedCanonicalPlayerName) + '.png'; 
     try {
         const fileHandle = await playersDir.getFileHandle(fileName, { create: true });
         const writable = await fileHandle.createWritable();
-        await writable.write(avatarFile);
+        await writable.write(file);
         await writable.close();
         alert(`Avatar for ${selectedCanonicalPlayerName} saved successfully as ${fileName}!`);
         await loadPlayerAvatarForEditing(selectedCanonicalPlayerName);
@@ -1203,7 +1285,7 @@ function exportAllDataToCSV() {
 }
 
 function exportAllDataZIPPlaceholder() {
-    alert("To export all data as a ZIP file, please manually navigate to your application's root directory, find the 'Data' subfolder, and create a ZIP archive of it using your operating system's built-in tools (e.g., right-click -> Send to -> Compressed (zipped) folder on Windows, or right-click -> Compress on macOS).");
+    alert("Manual ZIP Export: Please navigate to your selected data folder, then to the 'Data' subfolder. Right-click the 'Data' subfolder and choose 'Send to > Compressed (zipped) folder' or your OS equivalent.");
 }
 
 function buildCanonicalPlayerNameMap() {
@@ -1254,4 +1336,66 @@ function addPlayerEntryFieldInManageForm(player = null) {
         <button type="button" onclick="this.parentElement.remove()" class="danger" style="font-size:0.85em; padding: 5px 8px;">Remove Player</button>
     `;
     container.appendChild(playerDiv);
+}
+
+// --- New Function to handle changing data folder location ---
+async function handleChangeDataFolderRequest() {
+    if (!confirm("Are you sure you want to change the data folder location? This will reload the application and attempt to load data from the new location. Make sure to select the parent folder where a 'Data' subfolder exists or will be created.")) {
+        return;
+    }
+
+    const currentAppBaseDirHandleBeforeChange = appBaseDirHandle; 
+    const newHandleAttempt = await getAppBaseDirHandle(true); // forceNew = true
+
+    if (newHandleAttempt && newHandleAttempt !== currentAppBaseDirHandleBeforeChange) { 
+        appBaseDirHandle = newHandleAttempt; // Ensure the global handle is updated (used by getAppBaseDirHandle on reload via IndexedDB)
+        alert("Data folder location has been changed. The application will now reload.");
+        window.location.reload(); // Hard reload the page
+    } else if (!newHandleAttempt) { 
+        alert("Data folder location change was cancelled. The previous location will continue to be used.");
+        appBaseDirHandle = currentAppBaseDirHandleBeforeChange; 
+        if (!appBaseDirHandle) {
+             initialSetupOverlay.style.display = 'flex';
+        }
+    } else { 
+        alert("The selected folder is the same as the current one, or the selection process was not completed. No changes made.");
+    }
+}
+
+async function resetAndReloadAppWithNewBaseDir() {
+    // 1. Clear existing data and UI elements
+    allWeekData = [];
+    canonicalPlayerNameMap = new Map();
+    if (playerChartInstance) playerChartInstance.destroy();
+    if (weeklyPerformanceChartInstance) weeklyPerformanceChartInstance.destroy();
+    if (allTimePlayerProgressChartInstance) allTimePlayerProgressChartInstance.destroy();
+    
+    weekSelector.innerHTML = '<option value="all">All Time</option>';
+    manageDataWeekSelector.innerHTML = '<option value="">Select Week to Edit</option>';
+    playerListContainer.innerHTML = '';
+    overallStatsContainer.innerHTML = '';
+    playerDetailsSection.style.display = 'none';
+    playerSpecificStatsContainer.innerHTML = '';
+    playerGamesTableContainer.innerHTML = '';
+    document.getElementById('all-time-drink-stats-container').innerHTML = '';
+    managePlayerEntriesContainer.innerHTML = '<p>Select a week to see player entries.</p>'; // Reset placeholder
+    manageAvatarPlayerSelector.innerHTML = '<option value="">Select Player</option>';
+    currentPlayerAvatarDisplay.src = '#';
+    currentWeekDrinkImageDisplay.src = '#';
+    editWeekDetailsForm.reset();
+
+
+    // 2. Reload data from the new FS location (initializeApp essentials)
+    await loadAllWeekDataFromFS(); // This will use the new appBaseDirHandle
+
+    // 3. Re-populate UI (initializeAppUI essentials)
+    populateWeekSelector();
+    initializeAvatarManagementSection(); // Re-initialize avatar section with new data/map
+    prepareNewSessionForm(); // Reset new session form (though it's mostly static)
+    renderManageDataList();  // Refresh the manage data list
+
+    // 4. Show a default tab (e.g., dashboard) and refresh it
+    showTab('dashboard'); // This will also call renderDashboardUI which uses new data
+    
+    console.log("Application reloaded with new data folder location.");
 } 
