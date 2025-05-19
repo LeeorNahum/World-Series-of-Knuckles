@@ -1,0 +1,60 @@
+{
+  "uuid": "10703bde-2bbb-41dd-b5cd-4f99a2071301",
+  "name": "Poker Night Alpha",
+  "date": "2025-06-01",
+  "players": [
+    {
+      "PlayerName": "Alex",
+      "BuyIn": 25,
+      "FinalAmount": 45
+    },
+    {
+      "PlayerName": "Ben",
+      "BuyIn": 30,
+      "FinalAmount": 10
+    },
+    {
+      "PlayerName": "Chloe",
+      "BuyIn": 30,
+      "FinalAmount": 35
+    },
+    {
+      "PlayerName": "David",
+      "BuyIn": 25,
+      "FinalAmount": 20
+    },
+    {
+      "PlayerName": "Emma",
+      "BuyIn": 20,
+      "FinalAmount": 20
+    }
+  ],
+  "drinks": [
+    {
+      "drinkName": "Cosmic Colada",
+      "playerRatings": [
+        {
+          "playerName": "Alex",
+          "rating": 7.5
+        },
+        {
+          "playerName": "Ben",
+          "rating": 6
+        },
+        {
+          "playerName": "Chloe",
+          "rating": 8
+        },
+        {
+          "playerName": "David",
+          "rating": 7
+        },
+        {
+          "playerName": "Emma",
+          "rating": 6.5
+        }
+      ],
+      "drinkImagePath": "drink_1.png"
+    }
+  ]
+}

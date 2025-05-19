@@ -38,24 +38,15 @@
                 <select id="week-selector" onchange="handleWeekSelectionChange()"></select>
             </div>
             
-            <!-- New container for All Time Player Progress Chart -->
-            <div id="all-time-player-progress-chart-container" style="margin-bottom: 30px; display: none;">
-                <h3>All Time Player Net Progression</h3>
-                <div style="position: relative; height: 450px; max-height:60vh; width:100%; background-color: var(--bg-tertiary); padding: 15px; border-radius: 6px; border: 1px solid var(--border-color); margin-top:10px;">
-                    <canvas id="all-time-player-progress-chart"></canvas>
-                </div>
-            </div>
-            
             <div id="dashboard-poker-stats">
             <div id="overall-stats" class="stats-grid"></div>
             <h3>Players</h3>
-                <input type="text" id="player-search" placeholder="Search player..." onkeyup="renderPlayerList(getSelectedWeekId())">
+                
             <div id="player-list"></div>
             <div id="player-details-section" style="margin-top: 30px; display: none;">
-                <h3>
-                    <img id="player-detail-avatar" class="player-avatar" src="knuckles.png" alt="Player Avatar">
-                        <span id="player-detail-name"></span> - Stats (<span id="player-detail-context">All Time</span>)
-                </h3>
+                    <div id="player-detail-header">
+                        <!-- Player PFP, Name, Games Played will be rendered here by JS -->
+                    </div>
                 <div id="player-specific-stats" class="stats-grid"></div>
                     <h4>Winnings/Losses Graph</h4>
                     <div id="player-chart-container">
@@ -66,11 +57,19 @@
                 </div>
             </div>
 
-            <!-- New container for the weekly buy-in/cash-out chart -->
-            <div id="weekly-performance-chart-container" style="margin-top: 30px; display: none;">
-                <h3>Weekly Player Performance (Buy-ins vs. Cash-outs)</h3>
-                <div id="player-chart-container-weekly" style="position: relative; height: 400px; max-height:50vh; width:100%; background-color: var(--bg-tertiary); padding: 15px; border-radius: 6px; border: 1px solid var(--border-color); margin-top:10px;">
-                    <canvas id="weekly-performance-chart"></canvas>
+            <!-- Moved All Time Player Net Profit Chart here -->
+            <div id="all-time-player-net-profit-chart-container" style="margin-bottom: 30px; display: none;">
+                <h3>All Time Player Net Profit</h3>
+                <div style="position: relative; height: 450px; max-height:60vh; width:100%; background-color: var(--bg-tertiary); padding: 15px; border-radius: 6px; border: 1px solid var(--border-color); margin-top:10px;">
+                    <canvas id="all-time-player-net-profit-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Renamed Weekly Performance Chart -->
+            <div id="player-performance-chart-container" style="margin-top: 30px; display: none;">
+                <h3>Player Performance (Buy-ins vs. Final Amounts)</h3>
+                <div id="player-chart-container-performance" style="position: relative; height: 400px; max-height:50vh; width:100%; background-color: var(--bg-tertiary); padding: 15px; border-radius: 6px; border: 1px solid var(--border-color); margin-top:10px;">
+                    <canvas id="player-performance-chart"></canvas>
                 </div>
             </div>
 
@@ -79,85 +78,77 @@
             </div>
 
             <div id="dashboard-drink-stats" style="display:none;">
-                <h3>Mystery Drink Stats for <span id="drink-stats-week-name"></span></h3>
-                <div id="week-drink-info-container">
-                    <!-- Week's drink name and image will go here -->
+                <h3>Drink Stats for <span id="drink-stats-week-name">N/A Game</span></h3>
+                <div id="game-drinks-display-container" class="drink-display-grid">
+                    <!-- Drink cards will be populated here by renderDrinkStatsForGame -->
                 </div>
-                <h4>Player Ratings:</h4>
-                <p>Average Rating: <strong id="avg-drink-rating">N/A</strong></p>
-                <div id="player-drink-ratings-display"></div>
             </div>
         </div>
 
         <div id="data-entry" class="tab-content">
-            <h2>Enter New Game Session Data</h2>
+            <h2>Enter New Game Data</h2>
             <form id="data-entry-form" onsubmit="event.preventDefault(); saveEnteredSessionData();">
                 <div class="form-group">
-                    <label for="session-name">Session Name:</label>
+                    <label for="session-name">Game Name:</label>
                     <input type="text" id="session-name" required>
                 </div>
                 <div class="form-group">
-                    <label for="session-date">Session Date:</label>
+                    <label for="session-date">Game Date:</label>
                     <input type="date" id="session-date" required>
                 </div>
                 <hr>
-                <h3>This Week's Mystery Drink (Optional)</h3>
-                <div class="form-group">
-                    <label for="week-mystery-drink-name">Drink Name:</label>
-                    <input type="text" id="week-mystery-drink-name">
+                
+                <h3>Game Drinks</h3>
+                <div id="new-game-drinks-container" class="new-game-drinks-container">
+                    <!-- Drink entry forms will be dynamically added here by JavaScript -->
                 </div>
-                <div class="form-group">
-                    <label for="week-drink-image">Drink Image:</label>
-                    <input type="file" id="week-drink-image" accept="image/png, image/jpeg">
+                <button type="button" id="add-drink-to-new-game-button" onclick="addDrinkEntryForm('new')">Add Drink to Game</button>
+                <hr>
+
+                <h3>Players in this Game</h3>
+                <div id="player-entries-container">
+                    <!-- Player entry fields will be dynamically inserted here by JS -->
                 </div>
-                <hr>
-                <h3>Players in this Session</h3>
-                <div id="player-entries-container"></div>
-                <button onclick="addPlayerEntryField()">Add Player to Session</button>
-                <button onclick="saveSessionDataFS()" class="secondary">Save Game Session</button>
-                <hr>
+                <button type="button" id="add-player-to-game-button" onclick="addPlayerEntryField()" class="add-game-button">Add Player to Game</button>
+                <hr style="margin-top: 25px; margin-bottom: 25px;">
+                <button type="submit" class="secondary" style="font-size: 1.1em; padding: 15px 25px;">Save Game</button>
             </form>
         </div>
 
         <div id="manage-data" class="tab-content">
             <h2>Manage Data</h2>
             <div id="data-management-controls" style="margin-bottom: 20px;">
-                <label for="manage-data-week-selector">Select Week to Manage:</label>
+                <label for="manage-data-week-selector">Select Game to Manage:</label>
                 <select id="manage-data-week-selector"></select>
             </div>
 
-            <div id="edit-week-details-form" style="display: none; border: 1px solid var(--border-color); padding: 20px; border-radius: 8px; background-color: var(--bg-tertiary);">
-                <h3>Edit Week Details</h3>
+            <div id="edit-week-details-form">
+                <h3>Edit Game Details</h3>
                 <div class="form-group">
-                    <label for="manage-session-name">Session Name:</label>
+                    <label for="manage-session-name">Game Name:</label>
                     <input type="text" id="manage-session-name" required>
                 </div>
                 <div class="form-group">
-                    <label for="manage-session-date">Session Date:</label>
+                    <label for="manage-session-date">Game Date:</label>
                     <input type="date" id="manage-session-date" required>
                 </div>
                 <hr>
-                <h4>Mystery Drink for this Week</h4>
-                <div class="form-group">
-                    <label for="manage-week-mystery-drink-name">Drink Name:</label>
-                    <input type="text" id="manage-week-mystery-drink-name">
+                <h3>Game Drinks</h3>
+                <div id="manage-game-drinks-container" class="drink-display-grid">
+                    <!-- Drink entry forms will be dynamically added here by JavaScript -->
                 </div>
-                <div class="form-group">
-                    <label for="manage-week-drink-image">New Drink Image (Optional, replaces existing):</label>
-                    <input type="file" id="manage-week-drink-image" accept="image/png, image/jpeg">
-                    <div id="current-week-drink-image-display" style="margin-top: 10px;">
-                        <!-- Current image will be shown here by JS -->
-                    </div>
-                </div>
+                <button type="button" id="add-drink-to-manage-game-button" onclick="addDrinkEntryForm('manage')">Add Drink to Game</button>
                 <hr>
-                <h4>Players in this Session</h4>
+                <h3>Players in this Game</h3>
                 <div id="manage-player-entries-container" style="margin-bottom: 15px;">
                     <!-- Player edit fields will be dynamically inserted here by JS -->
                 </div>
-                <button type="button" onclick="addPlayerEntryFieldInManageForm()" style="margin-bottom:15px;">Add Player to This Session</button>
+                <button type="button" id="add-player-to-manage-game-button" onclick="addPlayerEntryFieldInManageForm()" class="add-game-button">Add Player to Game</button>
                 <hr>
-                <button id="save-week-changes-button" class="secondary">Save Week Changes</button>
-                <button id="delete-this-week-button" class="danger" style="margin-left: 10px;">Delete This Week</button>
+                <div style="display: flex; gap: 15px; margin-top: 20px;">
+                    <button id="save-week-changes-button" class="secondary">Save Game Changes</button>
+                    <button id="delete-this-week-button" class="danger">Delete This Game</button>
+                </div>
             </div>
 
             <hr style="margin-top: 40px; margin-bottom: 30px;">

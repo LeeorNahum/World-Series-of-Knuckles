@@ -1,0 +1,60 @@
+{
+  "uuid": "879cd607-e3f9-4100-9c1e-cd02eda18957",
+  "name": "Poker Finals!",
+  "date": "2025-06-22",
+  "players": [
+    {
+      "PlayerName": "Alex",
+      "BuyIn": 20,
+      "FinalAmount": 25
+    },
+    {
+      "PlayerName": "Ben",
+      "BuyIn": 15,
+      "FinalAmount": 10
+    },
+    {
+      "PlayerName": "Chloe",
+      "BuyIn": 30,
+      "FinalAmount": 35
+    },
+    {
+      "PlayerName": "David",
+      "BuyIn": 15,
+      "FinalAmount": 10
+    },
+    {
+      "PlayerName": "Emma",
+      "BuyIn": 20,
+      "FinalAmount": 20
+    }
+  ],
+  "drinks": [
+    {
+      "drinkName": "Ghost Sour Patch Flavor",
+      "playerRatings": [
+        {
+          "playerName": "Alex",
+          "rating": 7
+        },
+        {
+          "playerName": "Ben",
+          "rating": 6
+        },
+        {
+          "playerName": "Chloe",
+          "rating": 8
+        },
+        {
+          "playerName": "David",
+          "rating": 5
+        },
+        {
+          "playerName": "Emma",
+          "rating": 7
+        }
+      ],
+      "drinkImagePath": "drink_1.png"
+    }
+  ]
+}

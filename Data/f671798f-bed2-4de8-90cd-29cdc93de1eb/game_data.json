@@ -1,0 +1,65 @@
+{
+  "uuid": "f671798f-bed2-4de8-90cd-29cdc93de1eb",
+  "name": "Wednesday Reschedule",
+  "date": "2025-06-11",
+  "players": [
+    {
+      "PlayerName": "Alex",
+      "BuyIn": 20,
+      "FinalAmount": 30
+    },
+    {
+      "PlayerName": "Ben",
+      "BuyIn": 25,
+      "FinalAmount": 15
+    },
+    {
+      "PlayerName": "Chloe",
+      "BuyIn": 30,
+      "FinalAmount": 41
+    },
+    {
+      "PlayerName": "David",
+      "BuyIn": 20,
+      "FinalAmount": 10
+    },
+    {
+      "PlayerName": "Emma",
+      "BuyIn": 25,
+      "FinalAmount": 25
+    },
+    {
+      "PlayerName": "Bob",
+      "BuyIn": 10,
+      "FinalAmount": 9
+    }
+  ],
+  "drinks": [
+    {
+      "drinkName": "Prime UFC 300",
+      "playerRatings": [
+        {
+          "playerName": "Alex",
+          "rating": 7
+        },
+        {
+          "playerName": "Ben",
+          "rating": 6
+        },
+        {
+          "playerName": "Chloe",
+          "rating": 8
+        },
+        {
+          "playerName": "David",
+          "rating": 5
+        },
+        {
+          "playerName": "Emma",
+          "rating": 7
+        }
+      ],
+      "drinkImagePath": "drink_1.png"
+    }
+  ]
+}

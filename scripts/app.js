@@ -1,8 +1,8 @@
 // --- Core Variables ---
 let allWeekData = []; 
 let playerChartInstance = null;
-let weeklyPerformanceChartInstance = null; // For the new weekly chart
-let allTimePlayerProgressChartInstance = null; // For the new all-time player progress chart
+let playerPerformanceChartInstance = null; // Renamed from weeklyPerformanceChartInstance
+let allTimePlayerNetProfitChartInstance = null; // Renamed from allTimePlayerProgressChartInstance
 let appBaseDirHandle = null; // Renamed from rootDirHandle
 const DB_NAME = 'KnucklesPokerDB';
 const STORE_NAME = 'FileSystemHandles';
@@ -20,16 +20,15 @@ const overallStatsContainer = document.getElementById('overall-stats');
 const playerListContainer = document.getElementById('player-list');
 const playerDetailsSection = document.getElementById('player-details-section');
 const playerDetailNameEl = document.getElementById('player-detail-name');
-const playerDetailContextEl = document.getElementById('player-detail-context');
+const playerDetailContextEl = document.getElementById('player-detail-games-context');
 const playerDetailAvatarEl = document.getElementById('player-detail-avatar');
 const playerSpecificStatsContainer = document.getElementById('player-specific-stats');
 const playerDetailNameGamesEl = document.getElementById('player-detail-name-games');
-const playerDetailGamesContextEl = document.getElementById('player-detail-games-context');
 const playerGamesTableContainer = document.getElementById('player-games-table-container');
-const weeklyPerformanceChartContainer = document.getElementById('weekly-performance-chart-container'); 
-const weeklyPerformanceChartCanvas = document.getElementById('weekly-performance-chart'); 
-const allTimePlayerProgressChartContainer = document.getElementById('all-time-player-progress-chart-container'); 
-const allTimePlayerProgressChartCanvas = document.getElementById('all-time-player-progress-chart'); 
+const playerPerformanceChartContainer = document.getElementById('player-performance-chart-container'); // Renamed weeklyPerformanceChartContainer
+const playerPerformanceChartCanvas = document.getElementById('player-performance-chart'); // Renamed weeklyPerformanceChartCanvas
+const allTimePlayerNetProfitChartContainer = document.getElementById('all-time-player-net-profit-chart-container'); // Renamed allTimePlayerProgressChartContainer
+const allTimePlayerNetProfitChartCanvas = document.getElementById('all-time-player-net-profit-chart'); // Renamed allTimePlayerProgressChartCanvas
 const manageDataWeekSelector = document.getElementById('manage-data-week-selector');
 const editWeekDetailsForm = document.getElementById('edit-week-details-form');
 const manageSessionNameInput = document.getElementById('manage-session-name');
@@ -163,37 +162,47 @@ async function getPlayersDirHandle(createIfNeeded = false) {
 
 async function loadAllWeekDataFromFS() {
     allWeekData = [];
-    const dataDirHandle = await getDataDirHandle(false); // Don't create if not there
+    const dataDirHandle = await getDataDirHandle(false); 
     if (!dataDirHandle) {
-        // If Data dir doesn't exist, it's not an error for loading, just means no data.
-        // The initialSetupOverlay logic will be handled by initializeApp based on appBaseDirHandle
         console.info("'Data' directory not found. No data loaded.");
-        buildCanonicalPlayerNameMap(); // Ensure map is cleared/empty
-        return; // Exit early, allWeekData is empty
+        buildCanonicalPlayerNameMap(); 
+        return; 
     }
-    // initialSetupOverlay.style.display = 'none'; // This should be managed by initializeApp
+
     try {
         for await (const entry of dataDirHandle.values()) {
-            if (entry.kind === 'directory' && entry.name !== 'Players') { // Folder name is UUID
+            if (entry.kind === 'directory' && entry.name !== 'Players') { 
                 const sessionUUID = entry.name;
                 try {
-                    const dataFileHandle = await entry.getFileHandle('session_data.json', { create: false });
+                    const dataFileHandle = await entry.getFileHandle('game_data.json', { create: false }); // Changed filename
                     const file = await dataFileHandle.getFile();
                     const content = await file.text();
-                    const weekData = JSON.parse(content);
-                    
-                    // Ensure UUID from folder name matches if it exists in JSON, or add it.
-                    // User's provided files already have 'uuid' in JSON, so this should align.
-                    if (!weekData.uuid) {
-                        console.warn(`Session data in folder ${sessionUUID} is missing a UUID. Using folder name as UUID.`);
-                        weekData.uuid = sessionUUID;
-                    } else if (weekData.uuid !== sessionUUID) {
-                        console.warn(`UUID mismatch for folder ${sessionUUID}. JSON UUID: ${weekData.uuid}. Prioritizing folder name.`);
-                        weekData.uuid = sessionUUID; // Or handle error differently
+                    const gameData = JSON.parse(content); // Renamed weekData to gameData
+
+                    // Ensure gameData has a drinks array, even if empty, for consistent handling later
+                    if (!gameData.drinks) {
+                        gameData.drinks = [];
                     }
-                    allWeekData.push(weekData);
+                    // Remove legacy single drink properties if they exist on load (for older data before manual migration)
+                    delete gameData.weekMysteryDrinkName;
+                    delete gameData.weekMysteryDrinkImagePath;
+                    // Remove legacy MysteryDrinkRating from players (for older data)
+                    if (gameData.players) {
+                        gameData.players.forEach(player => {
+                            delete player.MysteryDrinkRating;
+                        });
+                    }
+
+                    if (!gameData.uuid) {
+                        console.warn(`Game data in folder ${sessionUUID} is missing a UUID. Using folder name as UUID.`);
+                        gameData.uuid = sessionUUID;
+                    } else if (gameData.uuid !== sessionUUID) {
+                        console.warn(`UUID mismatch for folder ${sessionUUID}. JSON UUID: ${gameData.uuid}. Prioritizing folder name.`);
+                        gameData.uuid = sessionUUID; 
+                    }
+                    allWeekData.push(gameData); // gameData is the new structure
                 } catch (e) {
-                    console.warn(`Could not read session_data.json for ${entry.name}: `, e);
+                    console.warn(`Could not read game_data.json for ${entry.name}: `, e); // Changed filename
                 }
             }
         }
@@ -211,60 +220,193 @@ async function loadAllWeekDataFromFS() {
     return allWeekData;
 }
 
-async function saveWeekDataToFS(weekData) { // This is the low-level save function
-    const dataDirHandle = await getDataDirHandle(true); // CREATE Data dir if not exists
+async function saveWeekDataToFS(gameDataToSave) { // Renamed weekDataToSave to gameDataToSave
+    const dataDirHandle = await getDataDirHandle(true); 
     if (!dataDirHandle) {
-        alert("Failed to get or create the main 'Data' directory. Cannot save session.");
+        alert("Failed to get or create the main 'Data' directory. Cannot save game."); // Updated message
         return false;
     }
 
-    if (!weekData.uuid) { // If it's a new session, generate UUID
-        weekData.uuid = generateUUID();
+    let processedGameData = { ...gameDataToSave }; 
+
+    if (!processedGameData.uuid) { 
+        processedGameData.uuid = generateUUID();
     }
-    const weekFolderName = weekData.uuid; // Folder name is the UUID
+    const gameFolderName = processedGameData.uuid; 
 
     try {
-        const weekDirHandle = await dataDirHandle.getDirectoryHandle(weekFolderName, { create: true });
-        if (weekData.weekDrinkImageFile) {
-            const ext = weekData.weekDrinkImageFile.name.split('.').pop();
-            const drinkImageName = `drink_image.${ext}`;
-            const imageFileHandle = await weekDirHandle.getFileHandle(drinkImageName, { create: true });
+        const gameDirHandle = await dataDirHandle.getDirectoryHandle(gameFolderName, { create: true }); // Renamed weekDirHandle
+        
+        // Process drinks: save images and update paths
+        if (processedGameData.drinks && Array.isArray(processedGameData.drinks)) {
+            try {
+                // Step 1: First collect all existing images to avoid name collisions later
+                const existingImageFiles = [];
+                try {
+                    for await (const entry of gameDirHandle.values()) {
+                        if (entry.kind === 'file' && entry.name.startsWith('drink_') && 
+                           (entry.name.endsWith('.png') || entry.name.endsWith('.jpg') || 
+                            entry.name.endsWith('.jpeg') || entry.name.endsWith('.gif'))) {
+                            existingImageFiles.push(entry.name);
+                            console.log(`Found existing image: ${entry.name}`);
+                        }
+                    }
+                } catch (err) {
+                    console.log("Error scanning existing files or new folder:", err);
+                    // Continue even if this fails - we'll just create new files
+                }
+                
+                // Step 2: Clean up old image files if they exist and aren't referenced anymore
+                if (existingImageFiles.length > 0) {
+                    const newImagePaths = new Set();
+                    // Add image paths that should be kept (will be overwritten if changed)
+                    processedGameData.drinks.forEach((drink, index) => {
+                        if (drink.drinkImagePath && !drink.drinkImageFile) {
+                            // We're keeping this existing path
+                            console.log(`Keeping reference to existing image: ${drink.drinkImagePath}`);
+                            newImagePaths.add(drink.drinkImagePath);
+                        }
+                    });
+                    
+                    // Delete any images not referenced anymore
+                    for (const oldFile of existingImageFiles) {
+                        if (!newImagePaths.has(oldFile)) {
+                            try {
+                                console.log(`Removing unused drink image: ${oldFile}`);
+                                await gameDirHandle.removeEntry(oldFile);
+                            } catch (e) {
+                                console.warn(`Could not delete unused image ${oldFile}:`, e);
+                            }
+                        }
+                    }
+                }
+                
+                // Step 3: Save all drink images with new consistent naming
+                for (let i = 0; i < processedGameData.drinks.length; i++) {
+                    const drink = processedGameData.drinks[i];
+                    console.log(`Processing drink ${i+1}: ${drink.drinkName}`);
+                    
+                    // Generate the proper sequential filename
+                    const imageFileName = `drink_${i+1}`;
+                    
+                    // If there's a new file to save
+                    if (drink.drinkImageFile) {
+                        try {
+                            // Get file extension or default to png
+                            let ext = 'png';
+                            if (drink.drinkImageFile.name && drink.drinkImageFile.name.includes('.')) {
+                                ext = drink.drinkImageFile.name.split('.').pop().toLowerCase();
+                            } else if (drink.drinkImageFile.type) {
+                                // Extract from MIME type (e.g., "image/jpeg" -> "jpeg")
+                                ext = drink.drinkImageFile.type.split('/')[1] || 'png';
+                            }
+                            
+                            // Create filename with proper extension
+                            const drinkImageName = `${imageFileName}.${ext}`;
+                            console.log(`Saving drink image as: ${drinkImageName}`);
+                            
+                            // Create file and write
+                            const imageFileHandle = await gameDirHandle.getFileHandle(drinkImageName, { create: true });
             const imageWritable = await imageFileHandle.createWritable();
-            await imageWritable.write(weekData.weekDrinkImageFile);
+                            await imageWritable.write(drink.drinkImageFile);
             await imageWritable.close();
-            weekData.weekMysteryDrinkImagePath = drinkImageName; 
-            delete weekData.weekDrinkImageFile;
+                            
+                            // Update the path and remove the file object
+                            drink.drinkImagePath = drinkImageName;
+                            console.log(`Successfully saved image for ${drink.drinkName} as ${drinkImageName}`);
+                            
+                            // Always clean up the file object to avoid circular references
+                            delete drink.drinkImageFile;
+                        } catch (err) {
+                            console.error(`Error saving image for drink ${drink.drinkName}:`, err);
+                            // If error occurs, don't set the path
+                            delete drink.drinkImagePath;
+                            delete drink.drinkImageFile;
+                        }
+                    } 
+                    // Handle case where we want to keep existing image but rename it to match new index
+                    else if (drink.drinkImagePath) {
+                        try {
+                            const oldPath = drink.drinkImagePath;
+                            const ext = oldPath.split('.').pop(); // Get extension from original file
+                            const newPath = `${imageFileName}.${ext}`;
+                            
+                            if (oldPath !== newPath) {
+                                console.log(`Renaming ${oldPath} to ${newPath}`);
+                                // Get the old file and read its data
+                                const oldFileHandle = await gameDirHandle.getFileHandle(oldPath, { create: false });
+                                const oldFile = await oldFileHandle.getFile();
+                                
+                                // Create the new file with the updated name
+                                const newFileHandle = await gameDirHandle.getFileHandle(newPath, { create: true });
+                                const newWritable = await newFileHandle.createWritable();
+                                await newWritable.write(oldFile);
+                                await newWritable.close();
+                                
+                                // Delete the old file
+                                await gameDirHandle.removeEntry(oldPath);
+                                
+                                // Update the path in the drink object
+                                drink.drinkImagePath = newPath;
+                                console.log(`Successfully renamed image for ${drink.drinkName} to ${newPath}`);
+                            }
+                        } catch (err) {
+                            console.error(`Error renaming image for drink ${drink.drinkName}:`, err);
+                            // If renaming fails, keep the old path
+                        }
+                    } else {
+                        // No image for this drink
+                        console.log(`No image for drink ${drink.drinkName}`);
+                        delete drink.drinkImagePath;
+                        delete drink.drinkImageFile;
+                    }
+                }
+            } catch (err) {
+                console.error("Error processing drink images:", err);
+                // Continue with saving even if image processing fails
+            }
         }
-        const dataFileHandle = await weekDirHandle.getFileHandle('session_data.json', { create: true });
+
+        // Remove legacy top-level drink properties before saving
+        delete processedGameData.weekMysteryDrinkName;
+        delete processedGameData.weekDrinkImageFile; 
+        delete processedGameData.weekMysteryDrinkImagePath; 
+
+        // Ensure players don't have the old MysteryDrinkRating property
+        if (processedGameData.players) {
+            processedGameData.players.forEach(player => {
+                delete player.MysteryDrinkRating;
+            });
+        }
+        
+        const dataFileHandle = await gameDirHandle.getFileHandle('game_data.json', { create: true }); // Changed filename
         const writable = await dataFileHandle.createWritable();
-        await writable.write(JSON.stringify(weekData, null, 2));
+        await writable.write(JSON.stringify(processedGameData, null, 2)); 
         await writable.close();
-        buildCanonicalPlayerNameMap();
         return true;
     } catch (err) {
-        console.error(`Error saving data for session ${weekData.uuid} in Data directory:`, err);
-        alert(`Failed to save session ${weekData.name} (${weekData.uuid}). Check console for errors.`);
+        console.error(`Error saving data for game ${processedGameData.uuid} in Data directory:`, err); // Updated message
+        alert(`Failed to save game ${processedGameData.name} (${processedGameData.uuid}). Check console for errors.`); // Updated message
         return false;
     }
 }
 
-async function deleteWeekDataFS(sessionUUID) {
+async function deleteWeekDataFS(gameUUID) { // Renamed sessionUUID to gameUUID
     const dataDirHandle = await getDataDirHandle();
     if (!dataDirHandle) return false;
-    const weekFolderName = sessionUUID; // Folder name is the UUID
-    const weekToDelete = allWeekData.find(w => w.uuid === sessionUUID);
-    const sessionNameForConfirm = weekToDelete ? weekToDelete.name : sessionUUID;
+    const gameFolderName = gameUUID; // Renamed weekFolderName
+    const gameToDelete = allWeekData.find(w => w.uuid === gameUUID); // Renamed weekToDelete, sessionUUID
+    const gameNameForConfirm = gameToDelete ? gameToDelete.name : gameUUID; // Renamed sessionNameForConfirm
 
-    if (!confirm(`Are you sure you want to delete all data for session '${sessionNameForConfirm}' (UUID: ${sessionUUID}) from the Data directory? This is permanent.`)) {
+    if (!confirm(`Are you sure you want to delete all data for game '${gameNameForConfirm}' (UUID: ${gameUUID}) from the Data directory? This is permanent.`)) { // Updated message
         return false;
     }
     try {
-        await dataDirHandle.removeEntry(weekFolderName, { recursive: true });
-        buildCanonicalPlayerNameMap();
+        await dataDirHandle.removeEntry(gameFolderName, { recursive: true });
         return true;
     } catch (err) {
-        console.error(`Error deleting folder ${weekFolderName} from Data directory:`, err);
-        alert(`Failed to delete session ${sessionNameForConfirm}. Check console.`);
+        console.error(`Error deleting folder ${gameFolderName} from Data directory:`, err);
+        alert(`Failed to delete game ${gameNameForConfirm}. Check console.`); // Updated message
         return false;
     }
 }
@@ -320,10 +462,22 @@ function prepareNewSessionForm() {
     // sessionIdInput.value = nextId; // Element removed
     document.getElementById('session-name').value = '';
     document.getElementById('session-date').valueAsDate = new Date();
-    document.getElementById('week-mystery-drink-name').value = '';
-    document.getElementById('week-drink-image').value = '';
+    
+    // Clear old single drink fields if they somehow still exist or were missed (belt and braces)
+    const oldDrinkName = document.getElementById('week-mystery-drink-name');
+    if (oldDrinkName) oldDrinkName.value = '';
+    const oldDrinkImage = document.getElementById('week-drink-image');
+    if (oldDrinkImage) oldDrinkImage.value = '';
+
+    // Clear dynamic drink entries
+    const newGameDrinksContainer = document.getElementById('new-game-drinks-container');
+    if (newGameDrinksContainer) newGameDrinksContainer.innerHTML = '';
+    // newGameDrinkEntryCount = 0; // Replaced with context specific reset
+    drinkEntryIdCounter.new = 0; // Reset counter for new drink entries in 'new' context
+
     playerEntriesContainer.innerHTML = '';
-    addPlayerEntryField();
+    addPlayerEntryField(); // Add one default player field
+    // updateAllDrinkRatingForms('new'); // Called by addPlayerEntryField if needed, or call here if first drink form is auto-added
 }
 
 // --- UI Navigation & General UI ---
@@ -337,7 +491,7 @@ function showTab(tabKey) {
     else if (tabKey === 'data-entry') document.getElementById('nav-entry').classList.add('active'); 
     else if (tabKey === 'manage-data') document.getElementById('nav-manage-data').classList.add('active');
     
-    if (tabKey === 'dashboard') renderDashboardUI(getSelectedSessionUUID()); 
+    if (tabKey === 'dashboard') renderDashboardUI(getSelectedGameUUID()); 
     if (tabKey === 'data-entry') prepareNewSessionForm(); 
     if (tabKey === 'manage-data') renderManageDataList();
 }
@@ -347,24 +501,33 @@ function populateWeekSelector() {
     allWeekData.forEach(week => { // Assumes allWeekData is sorted by date
         const option = document.createElement('option'); 
         option.value = week.uuid; // Use UUID as value
-        option.textContent = `${week.name} (${week.date})`; // Display name and date
+        option.textContent = `${week.name} (Game Date: ${week.date})`; // Display name and date
         weekSelector.appendChild(option); 
     }); 
 }
 
-function getSelectedSessionUUID() { return weekSelector.value; } // Renamed from getSelectedWeekId
+function getSelectedGameUUID() { return weekSelector.value; } // Renamed from getSelectedWeekId
 
 function handleWeekSelectionChange() { 
     currentDashboardView = 'poker'; 
-    renderDashboardUI(getSelectedSessionUUID()); 
+    renderDashboardUI(getSelectedGameUUID()); 
     playerDetailsSection.style.display = 'none'; 
 }
 function toggleDashboardView() { 
     currentDashboardView = (currentDashboardView === 'poker') ? 'drinks' : 'poker'; 
-    renderDashboardUI(getSelectedSessionUUID()); 
+    renderDashboardUI(getSelectedGameUUID()); 
 }
 function sanitizeForFileName(name) { return name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_.-]/g, ''); }
 function formatCurrency(amount) { return (amount !== null && typeof amount !== 'undefined' ? amount : 0).toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function formatPercentage(value) {
+    if (value === null || typeof value === 'undefined') {
+        return 'N/A';
+    }
+    if (!isFinite(value)) { // Handles Infinity and -Infinity
+        return 'N/A'; 
+    }
+    return value.toFixed(1) + '%';
+}
 function getPlayerImagePath(canonicalPlayerName) { 
     if (!canonicalPlayerName) return 'knuckles.png';
     return `Data/Players/${sanitizeForFileName(canonicalPlayerName)}.png`;
@@ -374,63 +537,397 @@ function getPlayerImagePath(canonicalPlayerName) {
 function addPlayerEntryField() {
     const entryCount = playerEntriesContainer.children.length;
     const playerDiv = document.createElement('div');
-    playerDiv.classList.add('player-entry');
+    playerDiv.classList.add('player-summary-card');
+    
+    // No longer nested - directly use the player-summary-card structure
     playerDiv.innerHTML = `
-        <h4>Player ${entryCount + 1}</h4>
-        <div class="form-group"><label>Player Name:</label><input type="text" class="player-name" required></div>
-        <div class="form-group"><label>Buy-In Amount:</label><input type="number" class="player-buyin" value="0" min="0" step="any" required></div>
-        <div class="form-group"><label>Cash-Out Amount:</label><input type="number" class="player-cashout" value="0" min="0" step="any" required></div>
-        <div class="form-group"><label>Rating for Week's Drink (0-10, Optional):</label><input type="number" class="player-mystery-drink-rating" min="0" max="10"></div>
-        <button onclick="this.parentElement.remove()" style="background-color: #5A5A5A;">Remove Player</button>
+        <div class="player-info-card">
+            <img src="knuckles.png" class="player-info-avatar" alt="Default Player Avatar" onerror="this.onerror=null;this.src='knuckles.png';">
+            <div class="player-info-details">
+                <input type="text" class="player-name" placeholder="Player Name" required style="font-size: 1.4em; font-weight: bold; background-color: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); width: 100%; margin: 0; padding: 5px; border-radius: 4px;">
+                <div class="player-info-games" style="font-size: 0.9em; color: var(--text-secondary); margin-top: 4px;">New Player</div>
+            </div>
+        </div>
+        <div class="player-metrics-grid">
+            <div class="metric-card">
+                <div class="metric-card-label">BUY-IN AMOUNT</div>
+                <input type="number" class="player-buyin metric-card-value" value="0" min="0" step="any" required style="background-color: var(--bg-tertiary); border: 1px solid var(--border-color); width: 100%; text-align: center; font-size: 1.5em; font-weight: bold; padding: 5px;">
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">FINAL AMOUNT</div>
+                <input type="number" class="player-final-amount metric-card-value" value="0" min="0" step="any" required style="background-color: var(--bg-tertiary); border: 1px solid var(--border-color); width: 100%; text-align: center; font-size: 1.5em; font-weight: bold; padding: 5px;">
+            </div>
+        </div>
+        <button type="button" class="remove-player" onclick="this.closest('.player-summary-card').remove(); updateAllDrinkRatingForms('new');">Remove Player</button>
     `;
+    
+    // Add event listener for player name input to update avatar and status
+    const playerNameInput = playerDiv.querySelector('.player-name');
+    const playerAvatar = playerDiv.querySelector('.player-info-avatar');
+    const playerStatusText = playerDiv.querySelector('.player-info-games');
+    
+    playerNameInput.addEventListener('input', function() {
+        const enteredName = playerNameInput.value.trim();
+        const lcName = enteredName.toLowerCase();
+        
+        // Check if this is an existing player
+        if (enteredName && canonicalPlayerNameMap[lcName]) {
+            playerStatusText.textContent = "Existing Player";
+            playerAvatar.src = getPlayerImagePath(canonicalPlayerNameMap[lcName]);
+            playerAvatar.onerror = function() { this.src = 'knuckles.png'; };
+        } else {
+            playerStatusText.textContent = "New Player";
+            playerAvatar.src = 'knuckles.png';
+        }
+        
+        // Update all drink rating forms with the new name
+        updateAllDrinkRatingForms('new');
+    });
+    
     playerEntriesContainer.appendChild(playerDiv);
+    updateAllDrinkRatingForms('new'); // Update drink forms when a new player is added
+}
+
+// --- Drink Entry Form Management (New & Manage Game) ---
+let drinkEntryIdCounter = { new: 0, manage: 0 }; // Context-aware counter
+
+function addDrinkEntryForm(context) {
+    drinkEntryIdCounter[context]++;
+    const drinkId = drinkEntryIdCounter[context];
+
+    const drinksContainerId = context === 'new' ? 'new-game-drinks-container' : 'manage-game-drinks-container';
+    const drinksContainer = document.getElementById(drinksContainerId);
+    if (!drinksContainer) {
+        console.error(`Container for drink entries '${drinksContainerId}' not found.`);
+        return null;
+    }
+
+    // Style like dashboard drink cards
+    const drinkEntryDiv = document.createElement('div');
+    drinkEntryDiv.classList.add('drink-card', 'detailed-drink-card');
+    drinkEntryDiv.id = `drink-entry-${context}-${drinkId}`;
+    drinkEntryDiv.dataset.drinkEntryId = drinkId;
+
+    // Create the HTML structure similar to dashboard drink cards
+    drinkEntryDiv.innerHTML = `
+        <div class="drink-profile-image-container" id="drink-image-container-${context}-${drinkId}">
+            <p class="image-not-found">Click to add image</p>
+            <input type="file" id="drink-image-${context}-${drinkId}" class="drink-form-image hidden-file-input" accept="image/png, image/jpeg" style="display:none;">
+        </div>
+        
+        <div class="drink-info-content">
+            <input type="text" id="drink-name-${context}-${drinkId}" class="drink-form-name drink-name-input" placeholder="Enter Drink Name" required>
+            
+            <h5>Player Ratings</h5>
+            <div class="drink-player-ratings-grid" id="player-ratings-for-drink-${context}-${drinkId}">
+                <!-- Ratings cards will be added here -->
+            </div>
+            
+            <button type="button" class="remove-drink-button" onclick="this.closest('.drink-card').remove()">Remove Drink</button>
+        </div>
+    `;
+    
+    drinksContainer.appendChild(drinkEntryDiv);
+    
+    // Add event listener for the drink name input to update the ratings grid title
+    const drinkNameInput = drinkEntryDiv.querySelector('.drink-form-name');
+    drinkNameInput.addEventListener('input', function() {
+        // Update player ratings grid title if needed
+        updateDrinkPlayerRatingsForm(drinkEntryDiv, context);
+    });
+    
+    // Set up the click-to-upload functionality
+    const imageContainer = drinkEntryDiv.querySelector(`.drink-profile-image-container`);
+    const fileInput = drinkEntryDiv.querySelector('.drink-form-image');
+    
+    if (imageContainer && fileInput) {
+        // Make the image container clickable to trigger file input
+        imageContainer.style.cursor = 'pointer';
+        imageContainer.addEventListener('click', function() {
+            fileInput.click();
+        });
+        
+        // Add hover effect
+        imageContainer.addEventListener('mouseenter', function() {
+            this.style.opacity = '0.8';
+            this.style.background = 'rgba(0,0,0,0.4)';
+        });
+        
+        imageContainer.addEventListener('mouseleave', function() {
+            this.style.opacity = '1';
+            this.style.background = 'var(--bg-tertiary)';
+        });
+        
+        // Handle file selection
+        fileInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                const selectedFile = this.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    // Store the file directly on the container for later access
+                    imageContainer.file = selectedFile;
+                    
+                    imageContainer.innerHTML = `
+                        <img src="${e.target.result}" alt="Selected Image" class="drink-profile-image">
+                        <input type="file" id="drink-image-${context}-${drinkId}" class="drink-form-image hidden-file-input" accept="image/png, image/jpeg" style="display:none;">
+                    `;
+                    
+                    // Set a flag to indicate we have a file
+                    imageContainer.dataset.hasImage = "true";
+                    
+                    // Get the updated file input
+                    const newFileInput = imageContainer.querySelector('.drink-form-image');
+                    
+                    // Set up click event 
+                    imageContainer.addEventListener('click', function() {
+                        newFileInput.click();
+                    });
+                    
+                    // Handle future file changes
+                    newFileInput.addEventListener('change', function() {
+                        if (this.files && this.files[0]) {
+                            const newSelectedFile = this.files[0];
+                            const newReader = new FileReader();
+                            newReader.onload = function(e) {
+                                // Update the container with the new image
+                                imageContainer.innerHTML = `
+                                    <img src="${e.target.result}" alt="Selected Image" class="drink-profile-image">
+                                    <input type="file" id="drink-image-${context}-${drinkId}" class="drink-form-image hidden-file-input" accept="image/png, image/jpeg" style="display:none;">
+                                `;
+                                
+                                // Update the stored file
+                                imageContainer.file = newSelectedFile;
+                                imageContainer.dataset.hasImage = "true";
+                                
+                                // Set up click event again
+                                const newestFileInput = imageContainer.querySelector('.drink-form-image');
+                                imageContainer.addEventListener('click', function() {
+                                    newestFileInput.click();
+                                });
+                                
+                                newestFileInput.addEventListener('change', this.onchange);
+                            };
+                            newReader.readAsDataURL(newSelectedFile);
+                        }
+                    });
+                };
+                reader.readAsDataURL(selectedFile);
+                
+                // Store the file reference directly
+                console.log(`Selected file for drink ${drinkId} in ${context} context:`, selectedFile.name);
+            }
+        });
+    }
+    
+    updateDrinkPlayerRatingsForm(drinkEntryDiv, context);
+    return drinkEntryDiv;
+}
+
+function updateDrinkPlayerRatingsForm(drinkEntryDiv, context) {
+    const ratingsContainer = drinkEntryDiv.querySelector('.drink-player-ratings-grid');
+    if (!ratingsContainer) return;
+
+    const drinkEntryId = drinkEntryDiv.dataset.drinkEntryId;
+    const playerEntriesContainerId = context === 'new' ? 'player-entries-container' : 'manage-player-entries-container';
+    const playersContainer = document.getElementById(playerEntriesContainerId);
+    if (!playersContainer) return;
+
+    const playerEntries = playersContainer.querySelectorAll(context === 'new' ? '.player-summary-card' : '.player-entry-manage');
+    
+    // Preserve existing ratings if any, keyed by player name
+    const existingRatings = {};
+    ratingsContainer.querySelectorAll('.drink-form-player-rating').forEach(input => {
+        const playerName = input.dataset.playerName;
+        if (playerName && input.value !== '') {
+            existingRatings[playerName.toLowerCase()] = parseFloat(input.value);
+        }
+    });
+
+    ratingsContainer.innerHTML = ''; // Clear existing rating fields
+
+    if (playerEntries.length === 0) {
+        ratingsContainer.innerHTML = '<p style="text-align:center; color:var(--text-secondary);">Add players to rate this drink</p>';
+        return;
+    }
+
+    playerEntries.forEach((playerEntry, index) => {
+        const playerNameInput = playerEntry.querySelector(context === 'new' ? '.player-name' : '.player-name-manage');
+        const playerName = playerNameInput ? playerNameInput.value.trim() : 'Player ' + (index + 1);
+        const lcPlayerName = playerName.toLowerCase();
+        
+        if (!playerName) return; // Skip if player name is not yet entered
+
+        const ratingValue = existingRatings[lcPlayerName] !== undefined ? existingRatings[lcPlayerName] : '';
+        const displayName = canonicalPlayerNameMap[lcPlayerName] || playerName;
+
+        // Create a player rating card similar to dashboard
+        const ratingDiv = document.createElement('div');
+        ratingDiv.classList.add('player-rating-metric');
+        ratingDiv.innerHTML = `
+            <div class="metric-card-label">${displayName}</div>
+            <input type="number" id="${context}-drink-${drinkEntryId}-rating-${lcPlayerName}" 
+                   class="drink-form-player-rating metric-card-value" 
+                   data-player-name="${playerName}" 
+                   value="${ratingValue}"
+                   min="0" max="10" step="0.1"
+                   style="text-align: center; font-weight: bold;">
+        `;
+        ratingsContainer.appendChild(ratingDiv);
+        
+        // Add change listener to rating input for real-time updates
+        const ratingInput = ratingDiv.querySelector('.drink-form-player-rating');
+        ratingInput.addEventListener('input', function() {
+            // This could be used for immediate feedback or validation
+            // For example, changing background color based on rating value
+            if (this.value !== '') {
+                const ratingVal = parseFloat(this.value);
+                if (ratingVal >= 0 && ratingVal <= 10) {
+                    this.style.backgroundColor = getRatingColor(ratingVal);
+                    this.style.color = 'white';
+                } else {
+                    this.style.backgroundColor = '';
+                    this.style.color = '';
+                }
+            } else {
+                this.style.backgroundColor = '';
+                this.style.color = '';
+            }
+        });
+        
+        // Trigger input event to apply initial styling
+        if (ratingValue !== '') {
+            const event = new Event('input', { bubbles: true });
+            ratingInput.dispatchEvent(event);
+        }
+    });
+}
+
+function updateAllDrinkRatingForms(context) {
+    const drinksContainerId = context === 'new' ? 'new-game-drinks-container' : 'manage-game-drinks-container';
+    const drinksContainer = document.getElementById(drinksContainerId);
+    if (!drinksContainer) return;
+
+    drinksContainer.querySelectorAll('.drink-card').forEach(drinkEntryDiv => {
+        updateDrinkPlayerRatingsForm(drinkEntryDiv, context);
+    });
 }
         
-async function saveEnteredSessionData() { // Renamed from saveSessionDataFS to avoid confusion with low-level one
-    const weekName = document.getElementById('session-name').value.trim();
-    const weekDate = document.getElementById('session-date').value;
-    const weekMysteryDrinkName = document.getElementById('week-mystery-drink-name').value.trim() || null;
-    const weekDrinkImageFile = document.getElementById('week-drink-image').files[0] || null;
+async function saveEnteredSessionData() { 
+    const gameName = document.getElementById('session-name').value.trim();
+    const gameDate = document.getElementById('session-date').value;
 
-    if (!weekName) { alert("Session Name is required."); return; }
-    if (!weekDate) { alert("Session Date is required."); return; }
+    if (!gameName) { alert("Game Name is required."); return; }
+    if (!gameDate) { alert("Game Date is required."); return; }
 
-    // Note: No longer checking for existing ID as UUID will be unique.
-    // Could add a check for duplicate name+date if desired, but not implemented here.
-
-    const newWeekData = { 
-        // uuid will be generated by saveWeekDataToFS (low-level)
-        name: weekName, 
-        date: weekDate, 
-        weekMysteryDrinkName, 
-        weekDrinkImageFile, // This will be processed by saveWeekDataToFS
-        players: [] 
+    const newGameData = {
+        name: gameName, 
+        date: gameDate, 
+        players: [],
+        drinks: []
     };
 
-    const playerEntries = playerEntriesContainer.querySelectorAll('.player-entry');
+    // Collect Player Data
+    const playerEntries = playerEntriesContainer.querySelectorAll('.player-summary-card');
     if (playerEntries.length === 0) { alert("Add at least one player."); return; }
 
     let hasValidPlayer = false;
     for (const entry of playerEntries) {
         const playerName = entry.querySelector('.player-name').value.trim();
         const buyInStr = entry.querySelector('.player-buyin').value;
-        const cashOutStr = entry.querySelector('.player-cashout').value;
-        const mysteryDrinkRatingInput = entry.querySelector('.player-mystery-drink-rating').value;
+        const finalAmountStr = entry.querySelector('.player-final-amount').value;
         
         const buyIn = buyInStr !== '' ? parseFloat(buyInStr) : 0;
-        const cashOut = cashOutStr !== '' ? parseFloat(cashOutStr) : 0;
-        const mysteryDrinkRating = mysteryDrinkRatingInput ? parseInt(mysteryDrinkRatingInput) : null;
+        const finalAmount = finalAmountStr !== '' ? parseFloat(finalAmountStr) : 0;
 
-        if (playerName && !isNaN(buyIn) && !isNaN(cashOut)) {
-            newWeekData.players.push({ PlayerName: playerName, BuyIn: buyIn, CashOut: cashOut, MysteryDrinkRating: mysteryDrinkRating });
+        if (playerName && !isNaN(buyIn) && !isNaN(finalAmount)) {
+            newGameData.players.push({ PlayerName: playerName, BuyIn: buyIn, FinalAmount: finalAmount });
             hasValidPlayer = true;
         }
     }
     if (!hasValidPlayer) { alert("No valid player data entered."); return; }
     
-    const success = await saveWeekDataToFS(newWeekData); // Call the low-level save function
+    // Collect Drink Data
+    const drinkForms = document.getElementById('new-game-drinks-container').querySelectorAll('.drink-card');
+    drinkForms.forEach(drinkForm => {
+        const drinkNameInput = drinkForm.querySelector('.drink-form-name');
+        const imageContainer = drinkForm.querySelector('.drink-profile-image-container');
+        
+        const drinkName = drinkNameInput ? drinkNameInput.value.trim() : null;
+        
+        // Try to get the image file 
+        let drinkImageFile = null;
+        
+        // Check if the image container has a file directly attached to it (best source)
+        if (imageContainer.file) {
+            console.log(`Using stored file from container for ${drinkName}`);
+            drinkImageFile = imageContainer.file;
+        }
+        // Otherwise check if there's a file in the input 
+        else {
+            const fileInput = drinkForm.querySelector('.drink-form-image');
+            
+            if (fileInput && fileInput.files && fileInput.files[0]) {
+                drinkImageFile = fileInput.files[0];
+                console.log(`Using file from input for ${drinkName}`);
+            } else {
+                // If no file in the input, check for img element, which means an image was selected
+                const imgElement = imageContainer.querySelector('img.drink-profile-image');
+                if (imgElement && !imgElement.src.includes('knuckles.png')) {
+                    // Extract file from the img src if it's a blob URL or data URL
+                    const imgSrc = imgElement.getAttribute('src');
+                    
+                    // Try to find a hidden file input that may have the file
+                    const hiddenFileInput = imageContainer.querySelector('.hidden-file-input');
+                    if (hiddenFileInput && hiddenFileInput.files && hiddenFileInput.files[0]) {
+                        drinkImageFile = hiddenFileInput.files[0];
+                        console.log(`Using file from hidden input for ${drinkName}`);
+                    } else if (imgSrc.startsWith('data:')) {
+                        try {
+                            // Convert data URL to blob for saving
+                            const byteString = atob(imgSrc.split(',')[1]);
+                            const mimeType = imgSrc.split(',')[0].split(':')[1].split(';')[0];
+                            const ab = new ArrayBuffer(byteString.length);
+                            const ia = new Uint8Array(ab);
+                            for (let i = 0; i < byteString.length; i++) {
+                                ia[i] = byteString.charCodeAt(i);
+                            }
+                            drinkImageFile = new Blob([ab], { type: mimeType });
+                            drinkImageFile.name = `drink_${Date.now()}.${mimeType.split('/')[1]}`;
+                            console.log(`Created blob from data URL for ${drinkName}`);
+                        } catch (e) {
+                            console.error("Error converting data URL to blob for drink:", drinkName, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (drinkName) { // Only add drink if it has a name
+            const currentDrinkRatings = [];
+            const ratingInputs = drinkForm.querySelectorAll('.drink-form-player-rating');
+            ratingInputs.forEach(ratingInput => {
+                const playerName = ratingInput.dataset.playerName;
+                const ratingValue = ratingInput.value;
+                if (playerName && ratingValue !== '') {
+                    currentDrinkRatings.push({
+                        playerName: playerName,
+                        rating: parseFloat(ratingValue)
+                    });
+                }
+            });
+
+            // Add the drink with all the collected data
+            newGameData.drinks.push({
+                drinkName: drinkName,
+                drinkImageFile: drinkImageFile,
+                playerRatings: currentDrinkRatings
+            });
+        }
+    });
+    
+    const success = await saveWeekDataToFS(newGameData);
     if (success) {
-        alert(`Session '${newWeekData.name}' saved successfully!`);
+        alert(`Game '${newGameData.name}' saved successfully!`);
         await loadAllWeekDataFromFS(); 
         populateWeekSelector();
         prepareNewSessionForm();
@@ -440,17 +937,17 @@ async function saveEnteredSessionData() { // Renamed from saveSessionDataFS to a
 }
 
 // --- Data Aggregation & Calculation ---
-function getAggregatedStatsForContext(selectedSessionUUID = "all") { // Parameter renamed
-    const relevantWeeks = selectedSessionUUID === "all" 
+function getAggregatedStatsForContext(selectedGameUUID = "all") { // Renamed selectedSessionUUID
+    const relevantWeeks = selectedGameUUID === "all" 
         ? allWeekData 
-        : allWeekData.filter(w => w.uuid === selectedSessionUUID);
+        : allWeekData.filter(w => w.uuid === selectedGameUUID);
 
-    if (!relevantWeeks || relevantWeeks.length === 0 && selectedSessionUUID !== "all") {
-        return { overall: { totalGames: 0, uniquePlayers: 0, totalBuyIns: 0, totalCashOuts: 0 }, players: {} };
+    if (!relevantWeeks || relevantWeeks.length === 0 && selectedGameUUID !== "all") {
+        return { overall: { totalGames: 0, uniquePlayers: 0, totalBuyIns: 0, totalFinalAmounts: 0 }, players: {} };
     }
 
     let totalBuyIns = 0;
-    let totalCashOuts = 0;
+    let totalFinalAmounts = 0;
     const uniqueLcPlayerNames = new Set();
     const playerAggregatedStats = {}; 
 
@@ -460,31 +957,49 @@ function getAggregatedStatsForContext(selectedSessionUUID = "all") { // Paramete
             const canonicalName = canonicalPlayerNameMap[lcPlayerName] || player.PlayerName;
             uniqueLcPlayerNames.add(lcPlayerName);
             totalBuyIns += (player.BuyIn || 0);
-            totalCashOuts += (player.CashOut || 0);
+            totalFinalAmounts += (player.FinalAmount || 0);
 
             if (!playerAggregatedStats[lcPlayerName]) {
                 playerAggregatedStats[lcPlayerName] = {
                     canonicalName: canonicalName,
-                    gamesPlayed: 0, totalBuyIn: 0, totalCashOut: 0, netProfit: 0, wins: 0, gameHistory: []
+                    gamesPlayed: 0, totalBuyIn: 0, totalFinalAmount: 0, netProfit: 0, wins: 0, 
+                    gameHistory: [],
                 };
             }
             const stats = playerAggregatedStats[lcPlayerName];
-            const net = (player.CashOut || 0) - (player.BuyIn || 0);
+            const net = (player.FinalAmount || 0) - (player.BuyIn || 0);
+            const profitPercentage = (player.BuyIn !== 0 && player.BuyIn !== null) ? (net / player.BuyIn) * 100 : null;
+
             stats.gamesPlayed++;
             stats.totalBuyIn += (player.BuyIn || 0);
-            stats.totalCashOut += (player.CashOut || 0);
+            stats.totalFinalAmount += (player.FinalAmount || 0);
             stats.netProfit += net;
             if (net > 0) stats.wins++;
+            
             stats.gameHistory.push({
-                sessionId: `${week.name} (${week.date})`, // Changed from W{id}
+                // sessionId: `${week.name} (${week.date})`, // This is more like a gameId or gameLabel now
+                gameLabel: `${week.name} (${week.date})`, // Renamed for clarity
                 date: week.date,
                 net: net,
                 buyIn: player.BuyIn || 0,
-                cashOut: player.CashOut || 0,
-                sessionUUID: week.uuid // Store for reference
+                finalAmount: player.FinalAmount || 0,
+                profitPercentage: profitPercentage, 
+                sessionUUID: week.uuid, // Keep this as sessionUUID if it refers to the game's unique ID (folder name)
+                gameName: week.name 
             });
+
+            if (selectedGameUUID !== "all") { 
+                stats.profitPercentage = profitPercentage;
+            }
         });
     });
+
+    // Calculate averageProfitPercentage for "all time" view
+    if (selectedGameUUID === "all") {
+        Object.values(playerAggregatedStats).forEach(pStats => {
+            pStats.averageProfitPercentage = (pStats.totalBuyIn !== 0 && pStats.totalBuyIn !== null) ? (pStats.netProfit / pStats.totalBuyIn) * 100 : null;
+        });
+    }
 
     Object.values(playerAggregatedStats).forEach(pStats => {
         pStats.gameHistory.sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -492,17 +1007,17 @@ function getAggregatedStatsForContext(selectedSessionUUID = "all") { // Paramete
     
     return {
         overall: {
-            totalGames: relevantWeeks.length,
+            totalGames: relevantWeeks.length, // This correctly represents games now
             uniquePlayers: uniqueLcPlayerNames.size,
             totalBuyIns: totalBuyIns,
-            totalCashOuts: totalCashOuts
+            totalFinalAmounts: totalFinalAmounts
         },
         players: playerAggregatedStats
     };
 }
 
 // --- Dashboard Rendering ---
-function renderDashboardUI(selectedSessionUUID = "all") { // Parameter renamed
+function renderDashboardUI(selectedGameUUID = "all") { // Parameter renamed
     const pokerStatsDiv = document.getElementById('dashboard-poker-stats');
     const drinkStatsDiv = document.getElementById('dashboard-drink-stats');
     const allTimeDrinkStatsContainer = document.getElementById('all-time-drink-stats-container');
@@ -511,18 +1026,18 @@ function renderDashboardUI(selectedSessionUUID = "all") { // Parameter renamed
     playerDetailsSection.style.display = 'none';
     drinkStatsDiv.style.display = 'none';
     allTimeDrinkStatsContainer.style.display = 'none';
-    weeklyPerformanceChartContainer.style.display = 'none';
-    if (allTimePlayerProgressChartContainer) allTimePlayerProgressChartContainer.style.display = 'none';
+    if (playerPerformanceChartContainer) playerPerformanceChartContainer.style.display = 'none'; // Renamed weeklyPerformanceChartContainer
+    if (allTimePlayerNetProfitChartContainer) allTimePlayerNetProfitChartContainer.style.display = 'none'; // Renamed allTimePlayerProgressChartContainer
     pokerStatsDiv.style.display = 'none';
 
-    if (selectedSessionUUID === "all") {
-        if (allTimePlayerProgressChartContainer) allTimePlayerProgressChartContainer.style.display = 'block';
+    if (selectedGameUUID === "all") { 
+        if (allTimePlayerNetProfitChartContainer) allTimePlayerNetProfitChartContainer.style.display = 'block'; // Renamed allTimePlayerProgressChartContainer
         pokerStatsDiv.style.display = 'block';
         allTimeDrinkStatsContainer.style.display = 'block';
         
-        renderAllTimePlayerProgressChart(); 
-        renderOverallStats(selectedSessionUUID);
-        renderPlayerList(selectedSessionUUID);
+        renderAllTimePlayerNetProfitChart(); // Renamed renderAllTimePlayerProgressChart
+        renderOverallStats(selectedGameUUID); 
+        renderPlayerList(selectedGameUUID); 
         renderAllTimeDrinkStats(); 
 
         const currentDetailedPlayer = playerDetailNameEl.textContent;
@@ -538,42 +1053,47 @@ function renderDashboardUI(selectedSessionUUID = "all") { // Parameter renamed
         }
         if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = playerDetailsSection.style.display === 'block' ? 'block' : 'none';
 
-    } else { // Specific session selected
-        if (allTimePlayerProgressChartContainer) allTimePlayerProgressChartContainer.style.display = 'none';
+    } else { // Specific game selected
+        if (allTimePlayerNetProfitChartContainer) allTimePlayerNetProfitChartContainer.style.display = 'none';
         pokerStatsDiv.style.display = 'block';
         drinkStatsDiv.style.display = 'block'; 
-        weeklyPerformanceChartContainer.style.display = 'block'; 
+        if (playerPerformanceChartContainer) playerPerformanceChartContainer.style.display = 'block'; // Renamed weeklyPerformanceChartContainer
 
-        renderOverallStats(selectedSessionUUID);
-        renderPlayerList(selectedSessionUUID); 
-        renderDrinkStatsForWeek(selectedSessionUUID);
-        renderWeeklyPerformanceChart(selectedSessionUUID); 
+        renderOverallStats(selectedGameUUID); // Pass renamed param
+        renderPlayerList(selectedGameUUID);  // Pass renamed param
+        renderDrinkStatsForGame(selectedGameUUID); // Pass renamed param
+        renderPlayerPerformanceChart(selectedGameUUID); // Renamed renderWeeklyPerformanceChart
         
         if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = 'none';
     }
 }
 
-function renderOverallStats(selectedSessionUUID = "all") { // Parameter renamed
-    const { overall } = getAggregatedStatsForContext(selectedSessionUUID);
-    overallStatsContainer.innerHTML = `
-        <div class="stat-card"><h4>Total Sessions</h4><p>${overall.totalGames}</p></div>
-        <div class="stat-card"><h4>Unique Players</h4><p>${overall.uniquePlayers}</p></div>
+function renderOverallStats(selectedGameUUID = "all") { // Renamed selectedSessionUUID
+    const { overall } = getAggregatedStatsForContext(selectedGameUUID); // Use renamed param
+    
+    let overallStatsHTML = '';
+    if (selectedGameUUID === "all") { 
+        overallStatsHTML += `<div class="stat-card"><h4>Total Games</h4><p>${overall.totalGames}</p></div>`; 
+        overallStatsHTML += `<div class="stat-card"><h4>Unique Players</h4><p>${overall.uniquePlayers}</p></div>`;
+    } else {
+        overallStatsHTML += `<div class="stat-card"><h4>Players</h4><p>${overall.uniquePlayers}</p></div>`; // Changed label for single game view
+    }
+    overallStatsHTML += `
         <div class="stat-card"><h4>Total Buy-Ins</h4><p>${formatCurrency(overall.totalBuyIns)}</p></div>
-        <div class="stat-card"><h4>Total Cash-Outs</h4><p>${formatCurrency(overall.totalCashOuts)}</p></div>
+        <div class="stat-card"><h4>Total Final Amounts</h4><p>${formatCurrency(overall.totalFinalAmounts)}</p></div> 
     `;
+    overallStatsContainer.innerHTML = overallStatsHTML;
 }
 
-function renderPlayerList(selectedSessionUUID = "all") { // Parameter renamed
-    const { players: aggregatedPlayerStats } = getAggregatedStatsForContext(selectedSessionUUID);
-    const searchTerm = document.getElementById('player-search').value.toLowerCase();
+function renderPlayerList(selectedGameUUID = "all") { // Parameter renamed, search removed
+    const { players: aggregatedPlayerStats } = getAggregatedStatsForContext(selectedGameUUID); // Use renamed param
     playerListContainer.innerHTML = '';
 
     const sortedLcPlayerNames = Object.keys(aggregatedPlayerStats)
-        .filter(lcName => aggregatedPlayerStats[lcName].canonicalName.toLowerCase().includes(searchTerm))
         .sort((a, b) => aggregatedPlayerStats[b].netProfit - aggregatedPlayerStats[a].netProfit);
 
     if (sortedLcPlayerNames.length === 0) {
-        playerListContainer.innerHTML = '<p style="text-align:center; color: var(--text-secondary);">No players found for this context or search.</p>';
+        playerListContainer.innerHTML = '<p style="text-align:center; color: var(--text-secondary);">No players found for this context.</p>'; // Message updated
         return;
     }
 
@@ -581,31 +1101,78 @@ function renderPlayerList(selectedSessionUUID = "all") { // Parameter renamed
         const playerData = aggregatedPlayerStats[lcPlayerName];
         const canonicalName = playerData.canonicalName;
         const playerDiv = document.createElement('div');
-        playerDiv.classList.add('player-list-item');
+        // playerDiv.classList.add('player-list-item'); // Old class
+        playerDiv.classList.add('player-summary-card'); // New outer card class
         playerDiv.dataset.playerName = canonicalName; 
         
         const netProfit = playerData.netProfit;
         let profitClass = netProfit > 0 ? 'profit' : netProfit < 0 ? 'loss' : 'neutral';
 
-        if (selectedSessionUUID === "all") {
+        let gamesPlayedDisplay = playerData.gamesPlayed;
+
+        if (selectedGameUUID === "all") { // Renamed selectedSessionUUID
             playerDiv.onclick = () => showPlayerDetails(canonicalName, "all");
+            
+            let avgProfitPercentValue = playerData.averageProfitPercentage;
+            let avgProfitPercentClass = (avgProfitPercentValue || 0) > 0 ? 'profit' : (avgProfitPercentValue || 0) < 0 ? 'loss' : 'neutral';
+            if (avgProfitPercentValue === null || !isFinite(avgProfitPercentValue)) avgProfitPercentClass = 'neutral';
+
             playerDiv.innerHTML = `
-                <img src="${getPlayerImagePath(canonicalName)}" class="player-avatar" alt="${canonicalName}" onerror="this.onerror=null;this.src='knuckles.png';">
-                <span style="flex-grow: 1;">
-                    <strong>${canonicalName}</strong> <br>
-                    <small>Games: ${playerData.gamesPlayed}, Net: <span class="${profitClass}">${formatCurrency(netProfit)}</span></small>
-                </span>
+                <div class="player-info-card">
+                    <img src="${getPlayerImagePath(canonicalName)}" class="player-info-avatar" alt="${canonicalName}" onerror="this.onerror=null;this.src='knuckles.png';">
+                    <div class="player-info-details">
+                        <div class="player-info-name">${canonicalName}</div>
+                        ${selectedGameUUID === "all" ? `<div class="player-info-games">Games: ${gamesPlayedDisplay}</div>` : ''} 
+                    </div>
+                </div>
+                <div class="player-metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-card-label">Net Profit</div>
+                        <div class="metric-card-value ${profitClass}">${formatCurrency(netProfit)}</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card-label">Net Avg. Profit Percentage</div>
+                        <div class="metric-card-value ${avgProfitPercentClass}">${formatPercentage(avgProfitPercentValue)}</div>
+                    </div>
+                </div>
             `;
-        } else {
+        } else { // Single Week View
+            playerDiv.classList.add('player-week-summary-card'); // More specific class if needed for single week variations
+
+            let weeklyProfitPercentValue = playerData.profitPercentage;
+            let weeklyProfitPercentClass = (weeklyProfitPercentValue || 0) > 0 ? 'profit' : (weeklyProfitPercentValue || 0) < 0 ? 'loss' : 'neutral';
+            if (weeklyProfitPercentValue === null || !isFinite(weeklyProfitPercentValue)) weeklyProfitPercentClass = 'neutral';
+            
+            // For single week, gamesPlayed is always 1 for the context of that week's stats.
+            // The original playerData.gamesPlayed refers to all-time games.
+            // We are showing stats for *this* session.
+            // gamesPlayedDisplay = 1; // This is not used anymore in the single week view for player card text
+
             playerDiv.innerHTML = `
-                <img src="${getPlayerImagePath(canonicalName)}" class="player-avatar" alt="${canonicalName}" onerror="this.onerror=null;this.src='knuckles.png';">
-                <div class="player-list-item-details">
-                    <strong>${canonicalName}</strong><br>
-                    <small>
-                        Buy-In: ${formatCurrency(playerData.totalBuyIn)} | 
-                        Cash-Out: ${formatCurrency(playerData.totalCashOut)} | 
-                        Net: <span class="${profitClass}">${formatCurrency(playerData.netProfit)}</span>
-                    </small>
+                <div class="player-info-card">
+                    <img src="${getPlayerImagePath(canonicalName)}" class="player-info-avatar" alt="${canonicalName}" onerror="this.onerror=null;this.src='knuckles.png';">
+                    <div class="player-info-details">
+                         <div class="player-info-name">${canonicalName}</div>
+                         
+                    </div>
+                </div>
+                <div class="player-metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-card-label">Buy-In</div>
+                        <div class="metric-card-value">${formatCurrency(playerData.totalBuyIn)}</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card-label">Final Amount</div>
+                        <div class="metric-card-value">${formatCurrency(playerData.totalFinalAmount)}</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card-label">Profit</div>
+                        <div class="metric-card-value ${profitClass}">${formatCurrency(netProfit)}</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card-label">Profit Percentage</div>
+                        <div class="metric-card-value ${weeklyProfitPercentClass}">${formatPercentage(weeklyProfitPercentValue)}</div>
+                    </div>
                 </div>
             `;
         }
@@ -613,14 +1180,14 @@ function renderPlayerList(selectedSessionUUID = "all") { // Parameter renamed
     });
 }
 
-function showPlayerDetails(canonicalPlayerName, selectedSessionUUID = "all") { // Parameter renamed
-    if (selectedSessionUUID !== "all") {
+function showPlayerDetails(canonicalPlayerName, selectedGameUUID = "all") { // Renamed selectedSessionUUID
+    if (selectedGameUUID !== "all") { // Renamed selectedSessionUUID
         playerDetailsSection.style.display = 'none';
         if (document.getElementById('player-chart-container')) document.getElementById('player-chart-container').style.display = 'none';
         return;
     }
 
-    const { players: aggregatedPlayerStats } = getAggregatedStatsForContext(selectedSessionUUID);
+    const { players: aggregatedPlayerStats } = getAggregatedStatsForContext(selectedGameUUID);
     const lcPlayerName = canonicalPlayerName.toLowerCase();
     const playerData = aggregatedPlayerStats[lcPlayerName];
     const playerChartSpecificContainer = document.getElementById('player-chart-container');
@@ -628,41 +1195,84 @@ function showPlayerDetails(canonicalPlayerName, selectedSessionUUID = "all") { /
     if (!playerData) {
         playerDetailsSection.style.display = 'none';
         if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = 'none'; 
-        console.warn(`No data for player ${canonicalPlayerName} (lc: ${lcPlayerName}) in context ${selectedSessionUUID}`);
+        console.warn(`No data for player ${canonicalPlayerName} (lc: ${lcPlayerName}) in context ${selectedGameUUID}`); // Use renamed param
         return;
     }
 
     playerDetailsSection.style.display = 'block';
     const contextText = "All Time"; 
+    
+    // Update main player info section to reflect new design
+    const playerDetailHeader = document.getElementById('player-detail-header'); 
+    if (playerDetailHeader) {
+        playerDetailHeader.innerHTML = `
+            <div class="player-info-card" style="display: flex; align-items: center; margin-bottom: 20px; background: var(--background-card); padding: 15px; border-radius: 8px;">
+                <img src="${getPlayerImagePath(canonicalPlayerName)}" class="player-info-avatar" alt="${canonicalName}" onerror="this.onerror=null;this.src='knuckles.png';" style="width: 80px; height: 80px; border-radius: 50%; margin-right: 20px;">
+                <div class="player-info-details">
+                    <div class="player-info-name" style="font-size: 1.8em; font-weight: bold;">${canonicalName}</div>
+                    <div class="player-info-games" style="font-size: 1em; color: var(--text-secondary);">Games: ${playerData.gamesPlayed} (${contextText})</div>
+                </div>
+            </div>
+        `;
+    } else { // Fallback to old elements if new header container isn't there
     playerDetailNameEl.textContent = canonicalPlayerName;
-    playerDetailContextEl.textContent = contextText;
-    playerDetailContextEl.dataset.contextSessionUuid = selectedSessionUUID; // Store "all" or actual UUID
+        playerDetailContextEl.textContent = contextText + ` (Games: ${playerData.gamesPlayed})`; // Label updated
     playerDetailAvatarEl.src = getPlayerImagePath(canonicalPlayerName);
     playerDetailAvatarEl.onerror = () => { playerDetailAvatarEl.src = 'knuckles.png'; };
+    }
+
 
     const winPercentage = playerData.gamesPlayed > 0 ? (playerData.wins / playerData.gamesPlayed * 100).toFixed(1) : 0;
     const avgNetPerGame = playerData.gamesPlayed > 0 ? (playerData.netProfit / playerData.gamesPlayed) : 0;
     
+    const netProfitClass = playerData.netProfit > 0 ? 'profit' : playerData.netProfit < 0 ? 'loss' : 'neutral';
+    const avgNetClass = avgNetPerGame > 0 ? 'profit' : avgNetPerGame < 0 ? 'loss' : 'neutral';
+    const avgProfitPercentClass = (playerData.averageProfitPercentage || 0) > 0 ? 'profit' : (playerData.averageProfitPercentage || 0) < 0 ? 'loss' : 'neutral';
+    if (playerData.averageProfitPercentage === null || !isFinite(playerData.averageProfitPercentage)) avgProfitPercentClass = 'neutral';
+
+    
     playerSpecificStatsContainer.innerHTML = `
-        <div class="stat-card"><h4>Games Played</h4><p>${playerData.gamesPlayed}</p></div>
-        <div class="stat-card"><h4>Total Buy-In</h4><p>${formatCurrency(playerData.totalBuyIn)}</p></div>
-        <div class="stat-card"><h4>Total Cash-Out</h4><p>${formatCurrency(playerData.totalCashOut)}</p></div>
-        <div class="stat-card"><h4>Net Profit/Loss</h4><p class="${playerData.netProfit > 0 ? 'profit' : playerData.netProfit < 0 ? 'loss' : 'neutral'}">${formatCurrency(playerData.netProfit)}</p></div>
-        <div class="stat-card"><h4>Win % (Net > 0)</h4><p>${winPercentage}%</p></div>
-        <div class="stat-card"><h4>Avg. Net/Game</h4><p class="${avgNetPerGame > 0 ? 'profit' : avgNetPerGame < 0 ? 'loss' : 'neutral'}">${formatCurrency(avgNetPerGame)}</p></div>
+        <div class="player-metrics-grid">
+            <div class="metric-card">
+                <div class="metric-card-label">Total Buy-In</div>
+                <div class="metric-card-value">${formatCurrency(playerData.totalBuyIn)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">Total Final Amount</div>
+                <div class="metric-card-value">${formatCurrency(playerData.totalFinalAmount)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">Net Profit/Loss</div>
+                <div class="metric-card-value ${netProfitClass}">${formatCurrency(playerData.netProfit)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">Win % (Net > 0)</div>
+                <div class="metric-card-value">${winPercentage}%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">Avg. Net/Game</div>
+                <div class="metric-card-value ${avgNetClass}">${formatCurrency(avgNetPerGame)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">Net Avg. Profit Percentage</div>
+                <div class="metric-card-value ${avgProfitPercentClass}">${formatPercentage(playerData.averageProfitPercentage)}</div>
+            </div>
+        </div>
     `;
+    // Games Played is now part of the header, so no separate card for it.
     
     if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = 'block';
-    renderPlayerChart(canonicalPlayerName, selectedSessionUUID, playerData.gameHistory); 
+    renderPlayerChart(canonicalPlayerName, selectedGameUUID, playerData.gameHistory); // Use renamed param
     
-    renderPlayerGamesTable(canonicalPlayerName, selectedSessionUUID);
+    renderPlayerGamesTable(canonicalPlayerName, selectedGameUUID); // Use renamed param
     
+    // These might not be needed if playerDetailHeader is used comprehensively
     playerDetailNameGamesEl.textContent = canonicalPlayerName;
     playerDetailGamesContextEl.textContent = contextText;
     playerDetailsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
         
-function renderPlayerChart(canonicalPlayerName, selectedSessionUUID, gameHistoryForChart) { // Parameter renamed
+function renderPlayerChart(canonicalPlayerName, selectedGameUUID, gameHistoryForChart) { // Parameter renamed
     if (playerChartInstance) playerChartInstance.destroy();
     if (!gameHistoryForChart || gameHistoryForChart.length === 0) {
         document.getElementById('player-chart').style.display = 'none';
@@ -670,7 +1280,7 @@ function renderPlayerChart(canonicalPlayerName, selectedSessionUUID, gameHistory
     }
     document.getElementById('player-chart').style.display = 'block';
 
-    const labels = gameHistoryForChart.map(game => game.sessionId); // sessionId already updated format
+    const labels = gameHistoryForChart.map(game => game.gameLabel); // Changed from sessionId to gameLabel
     const dataPoints = gameHistoryForChart.map(game => game.net);
     
     let cumulativeNet = 0;
@@ -705,7 +1315,7 @@ function renderPlayerChart(canonicalPlayerName, selectedSessionUUID, gameHistory
                             if (context.parsed.y !== null) label += formatCurrency(context.parsed.y); 
                             if (context.dataset.label === 'Net Winnings per Game' && gameHistoryForChart[context.dataIndex]) { 
                                 const gameData = gameHistoryForChart[context.dataIndex]; 
-                                label += ` (Buy: ${formatCurrency(gameData.buyIn)}, Out: ${formatCurrency(gameData.cashOut)})`;
+                                label += ` (Buy: ${formatCurrency(gameData.buyIn)}, Final Amount: ${formatCurrency(gameData.finalAmount)}, Profit Percentage: ${formatPercentage(gameData.profitPercentage)})`;
                             } 
                             return label; 
                         } 
@@ -713,31 +1323,31 @@ function renderPlayerChart(canonicalPlayerName, selectedSessionUUID, gameHistory
                 }
             },
             scales: { 
-                x: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } }, 
-                yNet: { position: 'left', beginAtZero: false, ticks: { color: 'var(--text-secondary)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'var(--border-color)' } }, 
-                yCumulative: { position: 'right', beginAtZero: false, ticks: { color: 'var(--text-secondary)', callback: function(value) { return formatCurrency(value); }}, grid: { drawOnChartArea: false } } 
+                x: { ticks: { color: 'rgba(230, 230, 230, 0.9)' }, grid: { color: 'rgba(100, 100, 100, 0.3)' } }, 
+                yNet: { position: 'left', beginAtZero: false, ticks: { color: 'rgba(230, 230, 230, 0.9)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'rgba(100, 100, 100, 0.3)' } }, 
+                yCumulative: { position: 'right', beginAtZero: false, ticks: { color: 'rgba(230, 230, 230, 0.9)', callback: function(value) { return formatCurrency(value); }}, grid: { drawOnChartArea: false } } 
             },
             interaction: { mode: 'index', intersect: false }
         }
     });
 }
 
-function renderPlayerGamesTable(canonicalPlayerName, selectedSessionUUID = "all") { // Parameter renamed
-    const relevantWeeks = selectedSessionUUID === "all" 
+function renderPlayerGamesTable(canonicalPlayerName, selectedGameUUID = "all") { // Parameter renamed
+    const relevantWeeks = selectedGameUUID === "all"  // Renamed selectedSessionUUID
         ? allWeekData 
-        : allWeekData.filter(w => w.uuid === selectedSessionUUID);
+        : allWeekData.filter(w => w.uuid === selectedGameUUID); // Renamed selectedSessionUUID
     let playerGames = [];
 
     relevantWeeks.forEach(week => {
         week.players.forEach(p => {
             if (p.PlayerName.toLowerCase() === canonicalPlayerName.toLowerCase()) { 
                 playerGames.push({
-                    SessionName: week.name, 
+                    SessionName: week.name, // This is effectively Game Name now
                     Date: week.date,
-                    BuyIn: p.BuyIn, CashOut: p.CashOut,
-                    Net: (p.CashOut || 0) - (p.BuyIn || 0),
-                    MysteryDrinkName: week.weekMysteryDrinkName, 
-                    MysteryDrinkRating: p.MysteryDrinkRating,
+                    BuyIn: p.BuyIn, FinalAmount: p.FinalAmount,
+                    Net: (p.FinalAmount || 0) - (p.BuyIn || 0),
+                    // MysteryDrinkName: week.weekMysteryDrinkName, // Removed
+                    // MysteryDrinkRating: p.MysteryDrinkRating, // Removed
                     sessionUUID: week.uuid
                 });
             }
@@ -750,130 +1360,258 @@ function renderPlayerGamesTable(canonicalPlayerName, selectedSessionUUID = "all"
         return;
     }
     
-    let tableHTML = '<table><thead><tr><th>Session</th><th>Date</th><th>Buy-In</th><th>Cash-Out</th><th>Net</th><th>Week\'s Drink</th><th>Your Rating</th></tr></thead><tbody>';
+    // Fetch profitPercentage for each game for the table
+    const { players: aggregatedStatsAllGames } = getAggregatedStatsForContext("all"); 
+    const lcCanonicalPlayerName = canonicalPlayerName.toLowerCase();
+
+    let tableHTML = '<table><thead><tr><th>Game</th><th>Date</th><th>Buy-In</th><th>Final Amount</th><th>Net</th><th>Profit Percentage</th></tr></thead><tbody>'; // Removed Drink columns
     playerGames.forEach(record => {
         let netClass = record.Net > 0 ? 'profit' : record.Net < 0 ? 'loss' : 'neutral';
+        
+        // Find the specific game in the full history to get its profitPercentage
+        let gameProfitPercentage = null;
+        if (aggregatedStatsAllGames[lcCanonicalPlayerName] && aggregatedStatsAllGames[lcCanonicalPlayerName].gameHistory) {
+            const gameDetail = aggregatedStatsAllGames[lcCanonicalPlayerName].gameHistory.find(
+                gh => gh.sessionUUID === record.sessionUUID // Assuming record has sessionUUID
+            );
+            if (gameDetail) {
+                gameProfitPercentage = gameDetail.profitPercentage;
+            }
+        }
+
+        let profitPercentClass = (gameProfitPercentage || 0) > 0 ? 'profit' : (gameProfitPercentage || 0) < 0 ? 'loss' : 'neutral';
+        if (gameProfitPercentage === null || !isFinite(gameProfitPercentage)) profitPercentClass = 'neutral';
+
         tableHTML += '<tr>';
         tableHTML +=   '<td>' + record.SessionName + '</td>';
         tableHTML +=   '<td>' + record.Date + '</td>';
         tableHTML +=   '<td>' + formatCurrency(record.BuyIn) + '</td>';
-        tableHTML +=   '<td>' + formatCurrency(record.CashOut) + '</td>';
+        tableHTML +=   '<td>' + formatCurrency(record.FinalAmount) + '</td>';
         tableHTML +=   '<td class="' + netClass + '">' + formatCurrency(record.Net) + '</td>';
-        tableHTML +=   '<td>' + (record.MysteryDrinkName || 'N/A') + '</td>';
-        tableHTML +=   '<td>' + (record.MysteryDrinkRating !== null ? record.MysteryDrinkRating + '/10' : 'N/A') + '</td>';
+        tableHTML +=   '<td class="' + profitPercentClass + '">' + formatPercentage(gameProfitPercentage) + '</td>';
         tableHTML += '</tr>';
     });
     tableHTML += '</tbody></table>';
     playerGamesTableContainer.innerHTML = tableHTML;
 }
 
-async function renderDrinkStatsForWeek(sessionUUID) { // Parameter renamed
-    const week = allWeekData.find(w => w.uuid === sessionUUID);
-    document.getElementById('drink-stats-week-name').textContent = week ? `${week.name} (${week.date})` : 'N/A'; // Updated display
-    
-    const weekDrinkInfoContainer = document.getElementById('week-drink-info-container');
-    const playerRatingsDisplay = document.getElementById('player-drink-ratings-display');
-    weekDrinkInfoContainer.innerHTML = '';
-    playerRatingsDisplay.innerHTML = '';
+async function renderDrinkStatsForGame(selectedGameUUID) { // Renamed from renderDrinkStatsForWeek
+    const gameData = allWeekData.find(g => g.uuid === selectedGameUUID);
+    document.getElementById('drink-stats-week-name').textContent = gameData ? `${gameData.name} (Game Date: ${gameData.date})` : 'N/A';
 
-    if (!week) {
-        document.getElementById('avg-drink-rating').textContent = 'N/A';
+    const gameDrinksDisplayContainer = document.getElementById('game-drinks-display-container');
+    if (!gameDrinksDisplayContainer) {
+        console.error("Element with ID 'game-drinks-display-container' not found.");
+        return;
+    }
+    gameDrinksDisplayContainer.innerHTML = '';
+
+    if (!gameData || !gameData.drinks || gameData.drinks.length === 0) {
+        gameDrinksDisplayContainer.innerHTML = '<p style="text-align:center; color: var(--text-secondary);">No drinks recorded for this game.</p>';
         return;
     }
 
-    let weekDrinkImageHtml = '';
-    if (week.weekMysteryDrinkImagePath) {
-         try {
             const dataDir = await getDataDirHandle();
-            if (dataDir) {
-                const weekDir = await dataDir.getDirectoryHandle(week.uuid, {create:false}); // Use UUID for folder
-                const imgFileHandle = await weekDir.getFileHandle(week.weekMysteryDrinkImagePath, {create:false});
+
+    for (const drink of gameData.drinks) {
+        const drinkCard = document.createElement('div');
+        // Apply similar classes as all-time drink stats for consistent styling
+        drinkCard.classList.add('drink-card', 'detailed-drink-card', 'game-drink-item'); 
+
+        let drinkImageHtml = '';
+        if (drink.drinkImagePath && dataDir) {
+            try {
+                const gameDirHandle = await dataDir.getDirectoryHandle(gameData.uuid, { create: false });
+                const imgFileHandle = await gameDirHandle.getFileHandle(drink.drinkImagePath, { create: false });
                 const file = await imgFileHandle.getFile();
                 const blobUrl = URL.createObjectURL(file);
-                weekDrinkImageHtml = `<img src="${blobUrl}" alt="${week.weekMysteryDrinkName || 'Week Drink'}" class="week-drink-image" onload="URL.revokeObjectURL(this.src)">`;
+                drinkImageHtml = `<div class="drink-profile-image-container"><img src="${blobUrl}" alt="${drink.drinkName}" class="drink-profile-image" onload="URL.revokeObjectURL(this.src)"></div>`;
+            } catch (e) {
+                console.warn(`Could not load drink image: ${drink.drinkImagePath} for game ${gameData.uuid}`, e);
+                drinkImageHtml = '<div class="drink-profile-image-container"><p class="image-not-found">Image not found</p></div>';
             }
-        } catch (e) { console.warn("Could not load week's drink image: " + week.weekMysteryDrinkImagePath, e); }
+        } else {
+            drinkImageHtml = '<div class="drink-profile-image-container"><p class="image-not-found">No Image</p></div>';
     }
-    weekDrinkInfoContainer.innerHTML = `
-        <h4>Week's Drink: ${week.weekMysteryDrinkName || 'N/A'}</h4>
-        ${weekDrinkImageHtml}
-    `;
     
     let totalRating = 0;
-    let ratedDrinksCount = 0;
-    if (week.players && week.players.length > 0) {
-        week.players.forEach(player => {
-            if (player.MysteryDrinkRating !== null && typeof player.MysteryDrinkRating === 'number') {
-                totalRating += player.MysteryDrinkRating;
-                ratedDrinksCount++;
-            }
-            const ratingItem = document.createElement('div');
-            ratingItem.classList.add('player-drink-rating-item');
-            ratingItem.innerHTML = `<strong>${player.PlayerName}:</strong> ${player.MysteryDrinkRating !== null ? player.MysteryDrinkRating + '/10' : 'Not Rated'}`;
-            playerRatingsDisplay.appendChild(ratingItem);
+        let ratedPlayersCount = 0;
+        const playerRatingsHtmlBits = [];
+
+        if (drink.playerRatings && drink.playerRatings.length > 0) {
+            const sortedPlayerRatings = [...drink.playerRatings].sort((a, b) => {
+                if (a.rating === null && b.rating === null) return (canonicalPlayerNameMap[a.playerName.toLowerCase()] || a.playerName).localeCompare(canonicalPlayerNameMap[b.playerName.toLowerCase()] || b.playerName);
+                if (a.rating === null) return 1;
+                if (b.rating === null) return -1;
+                if (b.rating !== a.rating) return b.rating - a.rating;
+                return (canonicalPlayerNameMap[a.playerName.toLowerCase()] || a.playerName).localeCompare(canonicalPlayerNameMap[b.playerName.toLowerCase()] || b.playerName);
+            });
+            
+            sortedPlayerRatings.forEach(pr => {
+                if (pr.rating !== null && typeof pr.rating === 'number') {
+                    totalRating += pr.rating;
+                    ratedPlayersCount++;
+                }
+                const playerNameDisplay = canonicalPlayerNameMap[pr.playerName.toLowerCase()] || pr.playerName;
+                // Use metric-card structure for player ratings
+                playerRatingsHtmlBits.push(`
+                    <div class="metric-card player-rating-metric">
+                        <div class="metric-card-label">${playerNameDisplay}</div>
+                        <div class="metric-card-value">${pr.rating !== null ? pr.rating.toFixed(1) : 'N/R'}</div>
+                    </div>
+                `);
         });
     } else {
-         playerRatingsDisplay.innerHTML = '<p>No player ratings for this week.</p>';
-    }
+            playerRatingsHtmlBits.push('<p style="font-size:0.9em; color:var(--text-secondary); grid-column: 1 / -1;">No player ratings for this drink.</p>');
+        }
+        
+        const averageDrinkRating = ratedPlayersCount > 0 ? (totalRating / ratedPlayersCount).toFixed(1) : 'N/A';
+        const avgRatingStyle = ratedPlayersCount > 0 ? `style="background-color: ${getRatingColor(parseFloat(averageDrinkRating))}; color: #fff;"` : '';
+        const avgRatingDisplayVal = averageDrinkRating + (averageDrinkRating !== 'N/A' ? '/10' : '');
 
-    const avgRating = ratedDrinksCount > 0 ? (totalRating / ratedDrinksCount).toFixed(1) : 'N/A';
-    document.getElementById('avg-drink-rating').textContent = avgRating + (avgRating !== 'N/A' ? '/10' : '');
+        drinkCard.innerHTML = `
+            ${drinkImageHtml}
+            <div class="drink-info-content">
+                <h4>${drink.drinkName}</h4>
+                <!-- No game-context paragraph here, as it's clear from the game view -->
+                <div class="drink-metrics-summary">
+                    <div class="metric-card average-rating-metric" ${avgRatingStyle}>
+                        <div class="metric-card-label">Avg. Rating</div>
+                        <div class="metric-card-value">${avgRatingDisplayVal}</div>
+                    </div>
+                </div>
+                <div class="drink-player-ratings-grid">
+                    ${playerRatingsHtmlBits.join('')}
+                </div>
+            </div>
+        `;
+        gameDrinksDisplayContainer.appendChild(drinkCard);
+    }
 }
 
 async function renderAllTimeDrinkStats() {
     const container = document.getElementById('all-time-drink-stats-container');
+    if (!container) {
+        console.error("Element with ID 'all-time-drink-stats-container' not found.");
+        return;
+    }
     container.innerHTML = ''; 
 
-    const drinksWithAvgRating = allWeekData
-        .filter(week => week.weekMysteryDrinkName && week.weekMysteryDrinkName.trim() !== '')
-        .map(week => {
+    const allDrinksAcrossAllGames = [];
+
+    for (const game of allWeekData) {
+        if (game.drinks && game.drinks.length > 0) {
+            for (const drink of game.drinks) {
+                if (drink.drinkName && drink.drinkName.trim() !== '') {
             let totalRating = 0;
-            let ratedDrinksCount = 0;
-            if (week.players) {
-                week.players.forEach(player => {
-                    if (player.MysteryDrinkRating !== null && typeof player.MysteryDrinkRating === 'number') {
-                        totalRating += player.MysteryDrinkRating;
-                        ratedDrinksCount++;
+                    let ratedPlayersCount = 0;
+                    if (drink.playerRatings) {
+                        drink.playerRatings.forEach(pr => {
+                            if (pr.rating !== null && typeof pr.rating === 'number') {
+                                totalRating += pr.rating;
+                                ratedPlayersCount++;
                     }
                 });
             }
-            const averageRating = ratedDrinksCount > 0 ? (totalRating / ratedDrinksCount) : -1;
-            return { ...week, averageRating, ratedDrinksCount }; 
-        })
-        .sort((a, b) => b.averageRating - a.averageRating); 
+                    const averageRating = ratedPlayersCount > 0 ? (totalRating / ratedPlayersCount) : -1; // Use -1 for unrated to simplify sorting
+                    
+                    allDrinksAcrossAllGames.push({
+                        drinkName: drink.drinkName,
+                        drinkImagePath: drink.drinkImagePath,
+                        gameName: game.name,
+                        gameDate: game.date,
+                        gameUUID: game.uuid,
+                        averageRating: averageRating,
+                        ratedPlayersCount: ratedPlayersCount,
+                        playerRatings: drink.playerRatings ? [...drink.playerRatings] : [] // Include individual player ratings
+                    });
+                }
+            }
+        }
+    }
 
-    if (drinksWithAvgRating.length === 0) {
-        container.innerHTML = '<h3>All Mystery Drinks</h3><p style="text-align:center; color: var(--text-secondary);">No mystery drinks recorded across any sessions.</p>';
+    allDrinksAcrossAllGames.sort((a, b) => {
+        if (b.averageRating !== a.averageRating) {
+            return b.averageRating - a.averageRating;
+        }
+        const nameComparison = a.drinkName.localeCompare(b.drinkName);
+        if (nameComparison !== 0) {
+            return nameComparison;
+        }
+        return new Date(b.gameDate) - new Date(a.gameDate);
+    });
+
+    if (allDrinksAcrossAllGames.length === 0) {
+        container.innerHTML = '<h3>All Drinks (Across All Games)</h3><p style="text-align:center; color: var(--text-secondary);">No drinks with names recorded across any games.</p>';
         return;
     }
 
-    let content = '<h3>All Mystery Drinks (Across All Sessions)</h3>';
-    content += '<div class="drink-display-grid">';
+    let content = '<h3>All Drinks (Across All Games)</h3>';
+    content += '<div class="drink-display-grid all-time-drinks-grid">';
 
-    for (const week of drinksWithAvgRating) { 
-        let weekDrinkImageHtml = '';
-        if (week.weekMysteryDrinkImagePath) {
-            try {
                 const dataDir = await getDataDirHandle();
-                if (dataDir) {
-                    const weekDir = await dataDir.getDirectoryHandle(week.uuid, { create: false }); // Use UUID
-                    const imgFileHandle = await weekDir.getFileHandle(week.weekMysteryDrinkImagePath, { create: false });
+
+    for (const drinkInstance of allDrinksAcrossAllGames) {
+        let drinkImageHtml = '';
+        if (drinkInstance.drinkImagePath && dataDir && drinkInstance.gameUUID) {
+            try {
+                const gameDirHandle = await dataDir.getDirectoryHandle(drinkInstance.gameUUID, { create: false });
+                const imgFileHandle = await gameDirHandle.getFileHandle(drinkInstance.drinkImagePath, { create: false });
                     const file = await imgFileHandle.getFile();
                     const blobUrl = URL.createObjectURL(file);
-                    weekDrinkImageHtml = `<img src="${blobUrl}" alt="${week.weekMysteryDrinkName}" class="week-drink-image" onload="URL.revokeObjectURL(this.src)">`;
-                }
+                // Using a class for drink profile icon style
+                drinkImageHtml = `<div class="drink-profile-image-container"><img src="${blobUrl}" alt="${drinkInstance.drinkName}" class="drink-profile-image" onload="URL.revokeObjectURL(this.src)"></div>`;
             } catch (e) {
-                console.warn(`Could not load week's drink image for all-time view (${week.weekMysteryDrinkImagePath}):`, e);
-                weekDrinkImageHtml = '<p style="font-size:0.8em; color:var(--text-secondary);">Image not found</p>';
+                console.warn(`Could not load drink image for all-time view (${drinkInstance.drinkImagePath} in game ${drinkInstance.gameUUID}):`, e);
+                drinkImageHtml = '<div class="drink-profile-image-container"><p class="image-not-found">Image not found</p></div>';
             }
+        } else {
+            drinkImageHtml = '<div class="drink-profile-image-container"><p class="image-not-found">No Image</p></div>';
         }
-        const avgRatingForWeekDisplay = week.ratedDrinksCount > 0 ? week.averageRating.toFixed(1) + '/10' : 'Not Rated';
+
+        const avgRatingDisplay = drinkInstance.ratedPlayersCount > 0 ? drinkInstance.averageRating.toFixed(1) : 'N/A';
+        // Placeholder for dynamic background style based on rating
+        const avgRatingStyle = drinkInstance.ratedPlayersCount > 0 ? `style="background-color: ${getRatingColor(drinkInstance.averageRating)}; color: #fff;"` : ''; 
+
+        let playerRatingsHtml = '<div class="drink-player-ratings-grid">';
+        if (drinkInstance.playerRatings && drinkInstance.playerRatings.length > 0) {
+            // Sort player ratings for this drink instance: highest to lowest
+            const sortedPlayerRatings = [...drinkInstance.playerRatings].sort((a, b) => {
+                if (a.rating === null && b.rating === null) return (canonicalPlayerNameMap[a.playerName.toLowerCase()] || a.playerName).localeCompare(canonicalPlayerNameMap[b.playerName.toLowerCase()] || b.playerName);
+                if (a.rating === null) return 1;
+                if (b.rating === null) return -1;
+                if (b.rating !== a.rating) return b.rating - a.rating;
+                return (canonicalPlayerNameMap[a.playerName.toLowerCase()] || a.playerName).localeCompare(canonicalPlayerNameMap[b.playerName.toLowerCase()] || b.playerName);
+            });
+
+            sortedPlayerRatings.forEach(pr => {
+                const playerNameDisplay = canonicalPlayerNameMap[pr.playerName.toLowerCase()] || pr.playerName;
+                playerRatingsHtml += `
+                    <div class="metric-card player-rating-metric">
+                        <div class="metric-card-label">${playerNameDisplay}</div>
+                        <div class="metric-card-value">${pr.rating !== null ? pr.rating.toFixed(1) : 'N/R'}</div>
+                    </div>
+                `;
+            });
+        } else {
+            playerRatingsHtml += '<p style="font-size:0.9em; color:var(--text-secondary); grid-column: 1 / -1;">No individual player ratings for this drink instance.</p>';
+        }
+        playerRatingsHtml += '</div>';
+
         content += `
-            <div class="drink-card">
-                <h4>${week.weekMysteryDrinkName}</h4>
-                <p style="font-size:0.9em; color:var(--text-secondary); margin-bottom:5px;"><em>Session: ${week.name} (${week.date})</em></p>
-                ${weekDrinkImageHtml}
-                <p><strong>Avg. Rating:</strong> ${avgRatingForWeekDisplay}</p>
+            <div class="drink-card all-time-drink-card detailed-drink-card">
+                ${drinkImageHtml}
+                <div class="drink-info-content">
+                    <h4>${drinkInstance.drinkName}</h4>
+                    <p class="game-context"><em>Game: ${drinkInstance.gameName} (${drinkInstance.gameDate})</em></p>
+                    <div class="drink-metrics-summary">
+                        <div class="metric-card average-rating-metric" ${avgRatingStyle}>
+                            <div class="metric-card-label">Avg. Rating</div>
+                            <div class="metric-card-value">${avgRatingDisplay}${avgRatingDisplay !== 'N/A' ? '/10' : ''}</div>
+                        </div>
+                    </div>
+                    ${playerRatingsHtml}
+                </div>
             </div>
         `;
     }
@@ -881,16 +1619,28 @@ async function renderAllTimeDrinkStats() {
     container.innerHTML = content;
 }
 
-function renderAllTimePlayerProgressChart() {
-    if (allTimePlayerProgressChartInstance) {
-        allTimePlayerProgressChartInstance.destroy();
-        allTimePlayerProgressChartInstance = null;
+// Helper function to get color based on rating (0-10)
+// Green (high rating) to Red (low rating)
+function getRatingColor(rating) {
+    if (rating === null || rating < 0) return 'var(--bg-tertiary)'; // Default for N/A or unrated
+    const r = Math.max(0, Math.min(255, Math.floor(255 * (1 - (rating / 10)))));
+    const g = Math.max(0, Math.min(255, Math.floor(255 * (rating / 10))));
+    // Ensure text is readable on darker shades by keeping blue low, or by setting text color dynamically.
+    // For simplicity here, we'll primarily use R and G.
+    // A more sophisticated approach might involve HSL color space or predefined color stops.
+    return `rgb(${r}, ${g}, 50)`; 
+}
+
+function renderAllTimePlayerNetProfitChart() { // Renamed from renderAllTimePlayerProgressChart
+    if (allTimePlayerNetProfitChartInstance) { // Renamed allTimePlayerProgressChartInstance
+        allTimePlayerNetProfitChartInstance.destroy(); // Renamed allTimePlayerProgressChartInstance
+        allTimePlayerNetProfitChartInstance = null; // Renamed allTimePlayerProgressChartInstance
     }
     if (!allWeekData || allWeekData.length === 0) {
-        if (allTimePlayerProgressChartCanvas) allTimePlayerProgressChartCanvas.style.display = 'none';
+        if (allTimePlayerNetProfitChartCanvas) allTimePlayerNetProfitChartCanvas.style.display = 'none'; // Renamed allTimePlayerProgressChartCanvas
         return;
     }
-    if (allTimePlayerProgressChartCanvas) allTimePlayerProgressChartCanvas.style.display = 'block';
+    if (allTimePlayerNetProfitChartCanvas) allTimePlayerNetProfitChartCanvas.style.display = 'block'; // Renamed allTimePlayerProgressChartCanvas
 
     // Assumes allWeekData is already sorted by date, then uuid by loadAllWeekDataFromFS()
     const sortedWeeks = allWeekData; 
@@ -898,9 +1648,11 @@ function renderAllTimePlayerProgressChart() {
 
     const datasets = [];
     const playerCumulativeNet = {}; 
+    const playerFinalCumulativeNet = {}; // To store the final cumulative net for sorting
 
     Object.keys(canonicalPlayerNameMap).forEach(lcName => {
         playerCumulativeNet[lcName] = Array(sortedWeeks.length).fill(null); 
+        playerFinalCumulativeNet[lcName] = 0; // Initialize final net
     });
 
     sortedWeeks.forEach((week, weekIndex) => {
@@ -909,18 +1661,28 @@ function renderAllTimePlayerProgressChart() {
             const playerInWeek = week.players.find(p => p.PlayerName.toLowerCase() === lcPlayerName);
             
             if (playerInWeek) {
-                currentWeekNetForPlayer = (playerInWeek.CashOut || 0) - (playerInWeek.BuyIn || 0);
+                currentWeekNetForPlayer = (playerInWeek.FinalAmount || 0) - (playerInWeek.BuyIn || 0);
             }
             const previousCumulativeNet = weekIndex > 0 ? (playerCumulativeNet[lcPlayerName][weekIndex - 1] || 0) : 0;
-            if (playerInWeek || previousCumulativeNet !== 0) { // Only carry forward if player played or had a balance
-                 playerCumulativeNet[lcPlayerName][weekIndex] = previousCumulativeNet + currentWeekNetForPlayer;
+            const currentCumulativeNet = previousCumulativeNet + currentWeekNetForPlayer;
+            
+            if (playerInWeek || previousCumulativeNet !== 0) { 
+                 playerCumulativeNet[lcPlayerName][weekIndex] = currentCumulativeNet;
+            }
+            if (weekIndex === sortedWeeks.length - 1) { // Store the last cumulative value
+                playerFinalCumulativeNet[lcPlayerName] = currentCumulativeNet;
             }
         });
     });
 
-    Object.keys(canonicalPlayerNameMap).forEach(lcPlayerName => {
+    // Sort player names based on their final cumulative net profit (descending)
+    const sortedPlayerLcNames = Object.keys(canonicalPlayerNameMap).sort((a, b) => {
+        return (playerFinalCumulativeNet[b] || 0) - (playerFinalCumulativeNet[a] || 0);
+    });
+
+    sortedPlayerLcNames.forEach(lcPlayerName => {
         const canonicalName = canonicalPlayerNameMap[lcPlayerName];
-        if (playerCumulativeNet[lcPlayerName].some(val => val !== null)) {
+        if (playerCumulativeNet[lcPlayerName].some(val => val !== null)) { // Only add if they have some data
             datasets.push({
                 label: canonicalName, data: playerCumulativeNet[lcPlayerName],
                 fill: false, borderColor: getRandomColor(), tension: 0.1, spanGaps: true
@@ -928,21 +1690,26 @@ function renderAllTimePlayerProgressChart() {
         }
     });
 
-    if (!allTimePlayerProgressChartCanvas) { console.error("allTimePlayerProgressChartCanvas is not defined"); return; }
-    const chartCtx = allTimePlayerProgressChartCanvas.getContext('2d');
-    if (!chartCtx) { console.error("Failed to get 2D context from allTimePlayerProgressChartCanvas"); return; }
+    if (!allTimePlayerNetProfitChartCanvas) { console.error("allTimePlayerNetProfitChartCanvas is not defined"); return; } // Renamed allTimePlayerProgressChartCanvas
+    const chartCtx = allTimePlayerNetProfitChartCanvas.getContext('2d'); // Renamed allTimePlayerProgressChartCanvas
+    if (!chartCtx) { console.error("Failed to get 2D context from allTimePlayerNetProfitChartCanvas"); return; } // Renamed
 
-    allTimePlayerProgressChartInstance = new Chart(chartCtx, {
+    allTimePlayerNetProfitChartInstance = new Chart(chartCtx, { // Renamed allTimePlayerProgressChartInstance
         type: 'line', data: { labels: weekLabels, datasets: datasets },
         options: {
             responsive: true, maintainAspectRatio: false,
             plugins: {
                 tooltip: { mode: 'index', intersect: false, callbacks: { label: function(context) { let label = context.dataset.label || ''; if (label) label += ': '; if (context.parsed.y !== null) label += formatCurrency(context.parsed.y); return label; }}},
-                legend: { position: 'top'}
+                legend: { 
+                    position: 'top',
+                    labels: {
+                        color: 'rgba(230, 230, 230, 0.9)' // Legend text color
+                    }
+                }
             },
             scales: {
-                y: { beginAtZero: false, ticks: { color: 'var(--text-secondary)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'var(--border-color)' }},
-                x: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' }}
+                y: { beginAtZero: false, ticks: { color: 'rgba(230, 230, 230, 0.9)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'rgba(100, 100, 100, 0.3)' }},
+                x: { ticks: { color: 'rgba(230, 230, 230, 0.9)' }, grid: { color: 'rgba(100, 100, 100, 0.3)' }}
             }
         }
     });
@@ -955,46 +1722,62 @@ function getRandomColor() {
     return `rgb(${r},${g},${b})`;
 }
 
-function renderWeeklyPerformanceChart(sessionUUID) { // Parameter renamed
-    if (weeklyPerformanceChartInstance) {
-        weeklyPerformanceChartInstance.destroy();
-        weeklyPerformanceChartInstance = null;
+function renderPlayerPerformanceChart(selectedGameUUID) { // Renamed from renderWeeklyPerformanceChart
+    if (playerPerformanceChartInstance) { // Renamed weeklyPerformanceChartInstance
+        playerPerformanceChartInstance.destroy(); // Renamed weeklyPerformanceChartInstance
+        playerPerformanceChartInstance = null; // Renamed weeklyPerformanceChartInstance
     }
-    const weekData = allWeekData.find(w => w.uuid === sessionUUID); // Find by UUID
+    const weekData = allWeekData.find(w => w.uuid === selectedGameUUID); 
 
-    if (!weeklyPerformanceChartCanvas) {
-        console.error("Global weeklyPerformanceChartCanvas is not initialized.");
+    if (!playerPerformanceChartCanvas) { // Renamed weeklyPerformanceChartCanvas
+        console.error("Global playerPerformanceChartCanvas is not initialized."); // Renamed
         return; 
     }
     if (!weekData || !weekData.players || weekData.players.length === 0) {
-        weeklyPerformanceChartCanvas.style.display = 'none'; 
+        if (playerPerformanceChartCanvas) playerPerformanceChartCanvas.style.display = 'none'; // Renamed weeklyPerformanceChartCanvas
         return;
     }
-    weeklyPerformanceChartCanvas.style.display = 'block';
-    const chartCtx = weeklyPerformanceChartCanvas.getContext('2d');
+    if (playerPerformanceChartCanvas) playerPerformanceChartCanvas.style.display = 'block'; // Renamed weeklyPerformanceChartCanvas
+    const chartCtx = playerPerformanceChartCanvas.getContext('2d'); // Renamed weeklyPerformanceChartCanvas
     if (!chartCtx) {
-        console.error("Failed to get 2D context from weekly-performance-chart canvas.");
-        weeklyPerformanceChartCanvas.style.display = 'none';
+        console.error("Failed to get 2D context from player-performance-chart canvas."); // Renamed
+        if (playerPerformanceChartCanvas) playerPerformanceChartCanvas.style.display = 'none'; // Renamed
         return;
     }
-    const labels = weekData.players.map(p => canonicalPlayerNameMap[p.PlayerName.toLowerCase()] || p.PlayerName);
-    const buyInData = weekData.players.map(p => p.BuyIn || 0);
-    const cashOutData = weekData.players.map(p => p.CashOut || 0);
-    weeklyPerformanceChartInstance = new Chart(chartCtx, {
+
+    // Sort players by net profit for this week (descending)
+    const sortedPlayers = [...weekData.players].sort((a, b) => {
+        const netA = (a.FinalAmount || 0) - (a.BuyIn || 0);
+        const netB = (b.FinalAmount || 0) - (b.BuyIn || 0);
+        return netB - netA; // Sort descending
+    });
+
+    const labels = sortedPlayers.map(p => canonicalPlayerNameMap[p.PlayerName.toLowerCase()] || p.PlayerName);
+    const buyInData = sortedPlayers.map(p => p.BuyIn || 0);
+    const finalAmountData = sortedPlayers.map(p => p.FinalAmount || 0);
+
+    playerPerformanceChartInstance = new Chart(chartCtx, { // Renamed weeklyPerformanceChartInstance
         type: 'bar',
         data: {
             labels: labels,
             datasets: [
                 { label: 'Buy-In', data: buyInData, backgroundColor: 'rgba(220, 53, 69, 0.7)', borderColor: 'rgba(220, 53, 69, 1)', borderWidth: 1 },
-                { label: 'Cash-Out', data: cashOutData, backgroundColor: 'rgba(40, 167, 69, 0.7)', borderColor: 'rgba(40, 167, 69, 1)', borderWidth: 1 }
+                { label: 'Final Amount', data: finalAmountData, backgroundColor: 'rgba(40, 167, 69, 0.7)', borderColor: 'rgba(40, 167, 69, 1)', borderWidth: 1 }
             ]
         },
         options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { tooltip: { callbacks: { label: function(context) { let label = context.dataset.label || ''; if (label) label += ': '; if (context.parsed.y !== null) label += formatCurrency(context.parsed.y); return label; }}}},
+            plugins: { 
+                tooltip: { callbacks: { label: function(context) { let label = context.dataset.label || ''; if (label) label += ': '; if (context.parsed.y !== null) label += formatCurrency(context.parsed.y); return label; }}},
+                legend: {
+                    labels: {
+                        color: 'rgba(230, 230, 230, 0.9)' // Legend text color
+                    }
+                }
+            },
             scales: {
-                y: { beginAtZero: true, ticks: { color: 'var(--text-secondary)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'var(--border-color)' }},
-                x: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' }}
+                y: { beginAtZero: true, ticks: { color: 'rgba(230, 230, 230, 0.9)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'rgba(100, 100, 100, 0.3)' }},
+                x: { ticks: { color: 'rgba(230, 230, 230, 0.9)' }, grid: { color: 'rgba(100, 100, 100, 0.3)' }}
             }
         }
     });
@@ -1003,18 +1786,18 @@ function renderWeeklyPerformanceChart(sessionUUID) { // Parameter renamed
 // --- Manage Data Tab ---
 function renderManageDataList() {
     editWeekDetailsForm.style.display = 'none';
-    manageDataWeekSelector.innerHTML = '<option value="">Select a session to edit...</option>';
+    manageDataWeekSelector.innerHTML = '<option value="">Select a game to edit...</option>'; // "session" to "game"
     allWeekData.forEach(week => { // Assumes sorted by date
         const option = document.createElement('option');
         option.value = week.uuid; // Use UUID
-        option.textContent = `${week.name} (${week.date})`; // Display name and date
+        option.textContent = `${week.name} (Game Date: ${week.date})`; // Display name and date, "Session" context removed
         manageDataWeekSelector.appendChild(option);
     });
 
     manageDataWeekSelector.onchange = () => {
-        const selectedSessionUUID = manageDataWeekSelector.value;
-        if (selectedSessionUUID) {
-            loadWeekDetailsForEditing(selectedSessionUUID); // Pass UUID
+        const selectedGameUUID = manageDataWeekSelector.value; // Renamed selectedSessionUUID
+        if (selectedGameUUID) { // Use renamed var
+            loadWeekDetailsForEditing(selectedGameUUID); // Pass renamed UUID
             editWeekDetailsForm.style.display = 'block';
         } else {
             editWeekDetailsForm.style.display = 'none';
@@ -1023,7 +1806,7 @@ function renderManageDataList() {
     };
     saveWeekChangesButton.onclick = saveModifiedWeekData;
     deleteThisWeekButton.onclick = deleteThisWeekInForm;
-    managePlayerEntriesContainer.innerHTML = '<p style="color:var(--text-secondary); text-align:center; margin-bottom:10px;"><em>Player information for the selected session will appear here once a session is chosen.</em></p>';
+    managePlayerEntriesContainer.innerHTML = '<p style="color:var(--text-secondary); text-align:center; margin-bottom:10px;"><em>Player information for the selected game will appear here once a game is chosen.</em></p>'; // "session" to "game"
     initializeAvatarManagementSection();
 }
 
@@ -1086,7 +1869,7 @@ async function savePlayerAvatar() {
         alert(`Avatar for ${selectedCanonicalPlayerName} saved successfully as ${fileName}!`);
         await loadPlayerAvatarForEditing(selectedCanonicalPlayerName);
         if (document.getElementById('dashboard').classList.contains('active')) {
-             renderDashboardUI(getSelectedSessionUUID());
+             renderDashboardUI(getSelectedGameUUID());
         }
     } catch (err) {
         console.error(`Error saving avatar for ${selectedCanonicalPlayerName}:`, err);
@@ -1101,56 +1884,218 @@ async function renderDrinkImageInForm(weekData, displayElement) {
             const dataDir = await getDataDirHandle();
             if (dataDir) {
                 const weekDir = await dataDir.getDirectoryHandle(weekData.uuid, { create: false }); // Use UUID
-                const imgFileHandle = await weekDir.getFileHandle(weekData.weekMysteryDrinkImagePath, { create: false });
+                const imgFileHandle = await weekDir.getFileHandle(weekData.weekMysteryDrinkImagePath, {create:false});
                 const file = await imgFileHandle.getFile();
                 const blobUrl = URL.createObjectURL(file);
-                displayElement.innerHTML = `<p>Current Image:</p><img src="${blobUrl}" alt="${weekData.weekMysteryDrinkName || 'Week Drink'}" class="week-drink-image" style="max-height: 100px; margin-bottom:10px;" onload="URL.revokeObjectURL(this.src)">`;
+                displayElement.innerHTML = `<p>Current Image:</p><img src="${blobUrl}" alt="${weekData.weekMysteryDrinkName || 'Game Drink'}" class="week-drink-image" style="max-height: 100px; margin-bottom:10px;" onload="URL.revokeObjectURL(this.src)">`; // "Week Drink" to "Game Drink"
             }
         } catch (e) {
-            console.warn("Could not load current week's drink image for form: " + weekData.weekMysteryDrinkImagePath, e);
+            console.warn("Could not load current game's drink image for form: " + weekData.weekMysteryDrinkImagePath, e); // "week's" to "game's"
             displayElement.innerHTML = '<p style="font-size:0.8em; color:var(--text-secondary);">Current image not found or cannot be displayed.</p>';
         }
     } else {
-        displayElement.innerHTML = '<p style="font-size:0.8em; color:var(--text-secondary);">No current image for this session.</p>';
+        displayElement.innerHTML = '<p style="font-size:0.8em; color:var(--text-secondary);">No current image for this game.</p>'; // "session" to "game"
     }
 }
 
-async function loadWeekDetailsForEditing(sessionUUID) { // Parameter renamed
-    const week = allWeekData.find(w => w.uuid === sessionUUID); // Find by UUID
+async function loadWeekDetailsForEditing(selectedGameUUID) {
+    console.log(`loadWeekDetailsForEditing called for UUID: ${selectedGameUUID}`);
+    const week = allWeekData.find(w => w.uuid === selectedGameUUID);
     if (!week) {
-        alert("Selected session not found!");
+        alert("Selected game not found!");
+        console.error(`Game with UUID ${selectedGameUUID} not found in allWeekData.`);
         editWeekDetailsForm.style.display = 'none';
         return;
     }
-    // manageSessionIdInput.value = week.id; // Element removed, UUID is week.uuid
+    console.log("Found game:", JSON.parse(JSON.stringify(week)));
+
     manageSessionNameInput.value = week.name;
     manageSessionDateInput.value = week.date;
-    manageWeekMysteryDrinkNameInput.value = week.weekMysteryDrinkName || '';
-    manageWeekDrinkImageInput.value = ''; 
-    await renderDrinkImageInForm(week, currentWeekDrinkImageDisplay);
-    // managePlayerEntriesContainer.innerHTML = `<p><em>Player data for session '${week.name}' will be editable here.</em></p>`; // Old placeholder
+    console.log("Set name and date for form.");
 
-    // Populate player edit fields
-    managePlayerEntriesContainer.innerHTML = ''; // Clear previous entries
-    if (week.players && week.players.length > 0) {
-        week.players.forEach(player => {
-            addPlayerEntryFieldInManageForm(player); // Pass existing player data
+    drinkEntryIdCounter.manage = 0;
+    const manageDrinksContainer = document.getElementById('manage-game-drinks-container');
+    if (!manageDrinksContainer) {
+        console.error('CRITICAL: #manage-game-drinks-container not found in HTML.');
+        editWeekDetailsForm.style.display = 'none';
+        return;
+    }
+    manageDrinksContainer.innerHTML = '';
+    console.log("Cleared manageDrinksContainer.");
+
+    const playerEntriesContainerRef = document.getElementById('manage-player-entries-container');
+    if (!playerEntriesContainerRef) {
+        console.error("CRITICAL: #manage-player-entries-container not found in HTML.");
+        return; // Cannot proceed without player container
+    }
+    playerEntriesContainerRef.innerHTML = '';
+    console.log("Cleared managePlayerEntriesContainer.");
+
+    if (week.players && Array.isArray(week.players) && week.players.length > 0) {
+        console.log("Processing players:", week.players);
+        week.players.forEach((player, index) => {
+            console.log(`Adding player entry ${index + 1}:`, player);
+            addPlayerEntryFieldInManageForm(player);
         });
     } else {
-        managePlayerEntriesContainer.innerHTML = '<p style="color:var(--text-secondary); text-align:center; margin-bottom:10px;"><em>No players in this session. Add one below.</em></p>';
+        console.log("No players found in game data or players array is invalid. Displaying placeholder.", week.players);
+        playerEntriesContainerRef.innerHTML = '<p style="color:var(--text-secondary); text-align:center; margin-bottom:10px;"><em>No players recorded in this game. You can add them below.</em></p>';
+    }
+
+    if (week.drinks && Array.isArray(week.drinks) && week.drinks.length > 0) {
+        console.log("Processing drinks:", week.drinks);
+        week.drinks.forEach(async (drinkData, index) => {
+            console.log(`Adding drink entry ${index + 1}:`, drinkData.drinkName);
+            const drinkEntryDiv = addDrinkEntryForm('manage');
+            if (!drinkEntryDiv) {
+                console.error("Failed to create drink entry form in manage context for drink:", drinkData.drinkName);
+                return; // Skip this drink if form creation failed
+            }
+            
+            // Set the drink name
+            const nameInput = drinkEntryDiv.querySelector('.drink-form-name');
+            if (nameInput) {
+                nameInput.value = drinkData.drinkName || '';
+            }
+
+            // Update drink image preview
+            const imageContainer = drinkEntryDiv.querySelector('.drink-profile-image-container');
+            const fileInput = drinkEntryDiv.querySelector('.drink-form-image');
+            
+            if (drinkData.drinkImagePath) {
+                try {
+                    const dataDir = await getDataDirHandle();
+                    if (dataDir) {
+                        const gameDirHandle = await dataDir.getDirectoryHandle(week.uuid, { create: false });
+                        const imgFileHandle = await gameDirHandle.getFileHandle(drinkData.drinkImagePath, { create: false });
+                        const file = await imgFileHandle.getFile();
+                        const blobUrl = URL.createObjectURL(file);
+                        
+                        // Update the image preview with the actual image
+                        if (imageContainer) {
+                            imageContainer.innerHTML = `
+                                <img src="${blobUrl}" alt="${drinkData.drinkName}" class="drink-profile-image" onload="URL.revokeObjectURL(this.src)">
+                                <input type="file" class="drink-form-image hidden-file-input" accept="image/png, image/jpeg" style="display:none;">
+                            `;
+                            
+                            // Store the existing image path for later use
+                            imageContainer.dataset.existingImagePath = drinkData.drinkImagePath;
+                            
+                            // Reattach event listeners
+                            const newFileInput = imageContainer.querySelector('.drink-form-image');
+                            imageContainer.style.cursor = 'pointer';
+                            
+                            imageContainer.addEventListener('click', function() {
+                                newFileInput.click();
+                            });
+                            
+                            imageContainer.addEventListener('mouseenter', function() {
+                                this.style.opacity = '0.8';
+                                this.style.background = 'rgba(0,0,0,0.4)';
+                            });
+                            
+                            imageContainer.addEventListener('mouseleave', function() {
+                                this.style.opacity = '1';
+                                this.style.background = 'transparent';
+                            });
+                            
+                            newFileInput.addEventListener('change', function() {
+                                if (this.files && this.files[0]) {
+                                    const reader = new FileReader();
+                                    reader.onload = function(e) {
+                                        imageContainer.innerHTML = `
+                                            <img src="${e.target.result}" alt="Selected Image" class="drink-profile-image">
+                                            <input type="file" id="drink-image-${context}-${drinkId}" class="drink-form-image hidden-file-input" accept="image/png, image/jpeg" style="display:none;">
+                                        `;
+                                        
+                                        // Reattach the event listeners to the new container
+                                        const newImageContainer = document.getElementById(`drink-image-container-${context}-${drinkId}`);
+                                        const newFileInput = newImageContainer.querySelector('.drink-form-image');
+                                        
+                                        newImageContainer.addEventListener('click', function() {
+                                            newFileInput.click();
+                                        });
+                                        
+                                        newImageContainer.addEventListener('mouseenter', function() {
+                                            this.style.opacity = '0.8';
+                                            this.style.background = 'rgba(0,0,0,0.4)';
+                                        });
+                                        
+                                        newImageContainer.addEventListener('mouseleave', function() {
+                                            this.style.opacity = '1';
+                                            this.style.background = 'transparent';
+                                        });
+                                        
+                                        newFileInput.addEventListener('change', fileInput.onchange);
+                                    };
+                                    reader.readAsDataURL(this.files[0]);
+                                }
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`Could not load drink image: ${drinkData.drinkImagePath}`, e);
+                    if (imageContainer) {
+                        imageContainer.innerHTML = `
+                            <p class="image-not-found">Click to add image</p>
+                            <input type="file" class="drink-form-image hidden-file-input" accept="image/png, image/jpeg" style="display:none;">
+                        `;
+                    }
+                }
+            }
+
+            // Set player ratings
+            if (drinkData.playerRatings && Array.isArray(drinkData.playerRatings)) {
+                drinkData.playerRatings.forEach(playerRating => {
+                    const ratingInput = drinkEntryDiv.querySelector(`.drink-form-player-rating[data-player-name="${playerRating.playerName}"]`);
+                    if (ratingInput) {
+                        ratingInput.value = playerRating.rating;
+                    }
+                });
+            }
+        });
+    }
+    editWeekDetailsForm.style.display = 'block';
+}
+
+// Function to handle the removal of a drink image in the manage form
+function handleRemoveManageDrinkImage(buttonElement) {
+    const drinkForm = buttonElement.closest('.drink-entry-form-item');
+    if (drinkForm) {
+        drinkForm.dataset.imageRemoved = 'true'; // Mark that the image is to be removed
+        
+        // Reset the image preview
+        const imagePreviewEl = drinkForm.querySelector('.drink-form-image-preview');
+        if (imagePreviewEl) {
+            imagePreviewEl.innerHTML = '<p class="image-not-found">Image will be removed</p>';
+        }
+        
+        // Update the image info container
+        const imageInfoContainer = drinkForm.querySelector('.drink-image-preview-container');
+        if (imageInfoContainer) {
+            imageInfoContainer.innerHTML = '<p class="no-current-image-text">Image will be removed on save.</p>';
+        }
+        
+        // Reset the file input in case it had a value
+        const fileInput = drinkForm.querySelector('.drink-form-image');
+        if (fileInput) {
+            fileInput.value = '';
+        }
+    } else {
+        console.warn("Could not find parent drink form for image removal button.");
     }
 }
 
 async function saveModifiedWeekData() {
-    const sessionUUID = manageDataWeekSelector.value; // Get UUID from selector
-    if (!sessionUUID) {
-        alert("No session selected to save.");
+    const selectedGameUUID = manageDataWeekSelector.value; // Get UUID from selector, renamed selectedSessionUUID
+    if (!selectedGameUUID) { // Use renamed var
+        alert("No game selected to save."); // "session" to "game"
         return;
     }
 
-    const weekIndex = allWeekData.findIndex(w => w.uuid === sessionUUID);
+    const weekIndex = allWeekData.findIndex(w => w.uuid === selectedGameUUID); // Use renamed var
     if (weekIndex === -1) {
-        alert("Original session data not found to save changes.");
+        alert("Original game data not found to save changes."); // "session" to "game"
         return;
     }
 
@@ -1159,17 +2104,107 @@ async function saveModifiedWeekData() {
 
     updatedWeekData.name = manageSessionNameInput.value.trim();
     updatedWeekData.date = manageSessionDateInput.value;
-    updatedWeekData.weekMysteryDrinkName = manageWeekMysteryDrinkNameInput.value.trim() || null;
+    // updatedWeekData.weekMysteryDrinkName = manageWeekMysteryDrinkNameInput.value.trim() || null; // REMOVED OLD
     
-    const newDrinkImageFile = manageWeekDrinkImageInput.files[0] || null;
-    if (newDrinkImageFile) {
-        updatedWeekData.weekDrinkImageFile = newDrinkImageFile; 
-    } else {
-        delete updatedWeekData.weekDrinkImageFile; 
-    }
+    // const newDrinkImageFile = manageWeekDrinkImageInput.files[0] || null; // REMOVED OLD
+    // if (newDrinkImageFile) { // REMOVED OLD
+    //     updatedWeekData.weekDrinkImageFile = newDrinkImageFile; // REMOVED OLD
+    // } else { // REMOVED OLD
+    //     delete updatedWeekData.weekDrinkImageFile; // REMOVED OLD
+    // } // REMOVED OLD
 
-    if (!updatedWeekData.name) { alert("Session Name is required."); return; }
-    if (!updatedWeekData.date) { alert("Session Date is required."); return; }
+    if (!updatedWeekData.name) { alert("Game Name is required."); return; } 
+    if (!updatedWeekData.date) { alert("Game Date is required."); return; } 
+
+    // Initialize drinks array for the updated data
+    updatedWeekData.drinks = [];
+    const drinkForms = document.getElementById('manage-game-drinks-container').querySelectorAll('.drink-card');
+
+    drinkForms.forEach(drinkForm => {
+        const drinkName = drinkForm.querySelector('.drink-form-name').value.trim();
+        if (!drinkName) return; // Skip if drink name is empty
+
+        const imageContainer = drinkForm.querySelector('.drink-profile-image-container');
+        
+        // First try to get the existing image path if it exists
+        const existingImagePath = imageContainer ? imageContainer.dataset.existingImagePath : null;
+        
+        // Try multiple approaches to get the image file
+        let drinkImageFile = null;
+        
+        // Check if the image container has a file directly attached to it
+        if (imageContainer.file) {
+            console.log(`Using stored file from container for ${drinkName}`);
+            drinkImageFile = imageContainer.file;
+        }
+        // Otherwise check if there's a file in the input 
+        else {
+            // 1. Check file input
+            const fileInput = drinkForm.querySelector('.drink-form-image');
+            if (fileInput && fileInput.files && fileInput.files[0]) {
+                drinkImageFile = fileInput.files[0];
+                console.log(`Using file from input for ${drinkName}`);
+            } 
+            // 2. If no file in input but there's an image element, try to get the file from there
+            else {
+                const imgElement = imageContainer.querySelector('img.drink-profile-image');
+                if (imgElement && !imgElement.src.includes('knuckles.png')) {
+                    // Get the image source
+                    const imgSrc = imgElement.getAttribute('src');
+                    
+                    // Try to find hidden file input
+                    const hiddenFileInput = imageContainer.querySelector('.hidden-file-input');
+                    if (hiddenFileInput && hiddenFileInput.files && hiddenFileInput.files[0]) {
+                        drinkImageFile = hiddenFileInput.files[0];
+                        console.log(`Using file from hidden input for ${drinkName}`);
+                    }
+                    // If it's a data URL, convert to blob
+                    else if (imgSrc.startsWith('data:')) {
+                        try {
+                            const byteString = atob(imgSrc.split(',')[1]);
+                            const mimeType = imgSrc.split(',')[0].split(':')[1].split(';')[0];
+                            const ab = new ArrayBuffer(byteString.length);
+                            const ia = new Uint8Array(ab);
+                            for (let i = 0; i < byteString.length; i++) {
+                                ia[i] = byteString.charCodeAt(i);
+                            }
+                            drinkImageFile = new Blob([ab], { type: mimeType });
+                            drinkImageFile.name = `drink_${Date.now()}.${mimeType.split('/')[1]}`;
+                            console.log(`Created blob from data URL for ${drinkName}`);
+                        } catch (e) {
+                            console.error("Error converting data URL to blob:", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect player ratings
+        const currentPlayerRatings = [];
+        const ratingInputs = drinkForm.querySelectorAll('.drink-form-player-rating');
+        ratingInputs.forEach(ratingInput => {
+            const playerName = ratingInput.dataset.playerName;
+            const ratingValue = ratingInput.value;
+            if (playerName && ratingValue !== '') {
+                currentPlayerRatings.push({ playerName: playerName, rating: parseFloat(ratingValue) });
+            }
+        });
+
+        // Create drink entry with all collected data
+        const drinkEntry = {
+            drinkName: drinkName,
+            playerRatings: currentPlayerRatings
+        };
+
+        // Assign image file or path based on what we found
+        if (drinkImageFile) {
+            drinkEntry.drinkImageFile = drinkImageFile;
+        } else if (existingImagePath) {
+            drinkEntry.drinkImagePath = existingImagePath;
+        }
+
+        updatedWeekData.drinks.push(drinkEntry);
+    });
 
     // Process edited player data
     const editedPlayers = [];
@@ -1178,91 +2213,82 @@ async function saveModifiedWeekData() {
     for (const entryDiv of playerEntryDivs) {
         const nameInput = entryDiv.querySelector('.player-name-manage');
         const buyInStr = entryDiv.querySelector('.player-buyin-manage').value;
-        const cashOutStr = entryDiv.querySelector('.player-cashout-manage').value;
-        const ratingStr = entryDiv.querySelector('.player-rating-manage').value;
+        const finalAmountStr = entryDiv.querySelector('.player-final-amount-manage').value;
 
-        const playerName = nameInput.value.trim(); // This will be read-only value for existing, or new value for new player
+        const playerName = nameInput.value.trim(); 
         const buyIn = buyInStr !== '' ? parseFloat(buyInStr) : 0;
-        const cashOut = cashOutStr !== '' ? parseFloat(cashOutStr) : 0;
-        const mysteryDrinkRating = ratingStr !== '' ? parseInt(ratingStr) : null;
+        const finalAmount = finalAmountStr !== '' ? parseFloat(finalAmountStr) : 0;
 
         if (!playerName) {
-            // If it's a new player input field (not read-only) and it's empty, skip it.
-            // Existing players always have a name (read-only field).
             if (nameInput.classList.contains('new-player-name-manage')) {
                 continue; 
             }
-            // This case should ideally not be hit for existing players due to readonly name, but as a safeguard:
             alert("A player name is missing. Please ensure all players have names.");
             return;
         }
-        if (isNaN(buyIn) || isNaN(cashOut)) {
-            alert(`Invalid buy-in or cash-out for player ${playerName}. Please enter valid numbers.`);
+        if (isNaN(buyIn) || isNaN(finalAmount)) {
+            alert(`Invalid buy-in or final amount for player ${playerName}. Please enter valid numbers.`);
             return;
         }
 
         editedPlayers.push({
             PlayerName: playerName,
             BuyIn: buyIn,
-            CashOut: cashOut,
-            MysteryDrinkRating: mysteryDrinkRating
+            FinalAmount: finalAmount
         });
     }
     updatedWeekData.players = editedPlayers;
 
-    const success = await saveWeekDataToFS(updatedWeekData); // Low-level save
+    const success = await saveWeekDataToFS(updatedWeekData);
     if (success) {
-        alert(`Session '${updatedWeekData.name}' updated successfully!`);
+        alert(`Game '${updatedWeekData.name}' updated successfully!`);
         await loadAllWeekDataFromFS(); 
         populateWeekSelector(); 
         renderManageDataList(); 
         
-        if (manageDataWeekSelector.value === sessionUUID){
-            loadWeekDetailsForEditing(sessionUUID);
+        if (manageDataWeekSelector.value === selectedGameUUID){
+            loadWeekDetailsForEditing(selectedGameUUID);
         } else {
-            manageDataWeekSelector.value = sessionUUID;
-            if (sessionUUID) loadWeekDetailsForEditing(sessionUUID);
+            manageDataWeekSelector.value = selectedGameUUID;
+            if (selectedGameUUID) loadWeekDetailsForEditing(selectedGameUUID);
         }
         if (document.getElementById('dashboard').classList.contains('active')) {
-            renderDashboardUI(getSelectedSessionUUID());
+            renderDashboardUI(getSelectedGameUUID());
         }
     } else {
-        alert(`Failed to update session '${updatedWeekData.name}'.`);
+        alert(`Failed to update game '${updatedWeekData.name}'.`);
     }
 }
 
 async function deleteThisWeekInForm() {
-    const sessionUUID = manageDataWeekSelector.value; // Get UUID from selector
-    if (!sessionUUID) {
-        alert("No session selected for deletion.");
+    const selectedGameUUID = manageDataWeekSelector.value; // Get UUID from selector, renamed selectedSessionUUID
+    if (!selectedGameUUID) { // Use renamed var
+        alert("No game selected for deletion."); // "session" to "game"
         return;
     }
-    const weekToDelete = allWeekData.find(w => w.uuid === sessionUUID);
-    const sessionName = weekToDelete ? weekToDelete.name : sessionUUID;
+    const weekToDelete = allWeekData.find(w => w.uuid === selectedGameUUID); // Use renamed var
+    const gameName = weekToDelete ? weekToDelete.name : selectedGameUUID; // Renamed sessionName to gameName
 
-    const success = await deleteWeekDataFS(sessionUUID); // Pass UUID
+    const success = await deleteWeekDataFS(selectedGameUUID); // Pass UUID, use renamed var
     if (success) {
-        alert(`Session '${sessionName}' and its data deleted successfully!`);
+        alert(`Game '${gameName}' and its data deleted successfully!`); // "Session" to "Game"
         await loadAllWeekDataFromFS();
         populateWeekSelector(); 
         renderManageDataList(); 
         editWeekDetailsForm.style.display = 'none'; 
         currentWeekDrinkImageDisplay.innerHTML = '';
         if (document.getElementById('dashboard').classList.contains('active')) {
-            renderDashboardUI(getSelectedSessionUUID());
+            renderDashboardUI(getSelectedGameUUID());
         }
     } else {
-        alert(`Failed to delete session '${sessionName}'.`);
+        alert(`Failed to delete game '${gameName}'.`); // "session" to "game"
     }
 }
 
 // --- CSV Export ---
 function exportAllDataToCSV() {
     if (allWeekData.length === 0) { alert('No data to export.'); return; }
-    // Headers: WeekUUID,WeekName,WeekDate,WeekMysteryDrinkName,PlayerName,BuyIn,CashOut,PlayerDrinkRating
-    // Using UUID internally but for CSV export, maybe name/date is more human-readable if not exporting UUID.
-    // For now, let's stick to not exporting UUID directly to user CSV unless specifically requested.
-    const headers = "SessionName,SessionDate,WeekMysteryDrinkName,PlayerName,BuyIn,CashOut,PlayerDrinkRating";
+    const headers = "GameName,GameDate,GameMysteryDrinkName,PlayerName,BuyIn,Final Amount,PlayerDrinkRating"; // "SessionName" to "GameName", etc.
     let csvRows = [headers];
     allWeekData.forEach(week => {
         week.players.forEach(player => {
@@ -1270,7 +2296,7 @@ function exportAllDataToCSV() {
                 `"${(week.name || '').replace(/"/g, '""')}"`, week.date,
                 `"${(week.weekMysteryDrinkName || '').replace(/"/g, '""')}"`, 
                 `"${(player.PlayerName || '').replace(/"/g, '""')}"`,
-                player.BuyIn || 0, player.CashOut || 0,
+                player.BuyIn || 0, player.FinalAmount || 0,
                 player.MysteryDrinkRating !== null ? player.MysteryDrinkRating : ''
             ].join(','));
         });
@@ -1299,7 +2325,7 @@ function buildCanonicalPlayerNameMap() {
                         canonicalPlayerNameMap[lcName] = player.PlayerName.trim(); // Store the trimmed, original casing
                     }
                 } else {
-                    console.warn("Skipping player with missing or invalid PlayerName in week:", week.uuid, player);
+                    // console.warn("Skipping player with missing or invalid PlayerName in week:", week.uuid, player); // Keep this commented unless debugging
                 }
             });
         } else {
@@ -1311,31 +2337,77 @@ function buildCanonicalPlayerNameMap() {
 
 // Function to add a player entry field to the Manage Data form
 function addPlayerEntryFieldInManageForm(player = null) {
-    const container = managePlayerEntriesContainer; // Global const for this container
+    const container = managePlayerEntriesContainer;
+    // Filter out placeholder if it exists
+    const placeholder = container.querySelector('p.placeholder-message');
+    if (placeholder) placeholder.remove();
+
     const playerDiv = document.createElement('div');
-    playerDiv.classList.add('player-entry-manage'); // Use a different class if needed for styling/selection
-    playerDiv.style.border = "1px solid var(--border-color-subtle)";
-    playerDiv.style.padding = "10px";
-    playerDiv.style.marginBottom = "10px";
-    playerDiv.style.borderRadius = "4px";
-
-    const playerName = player ? player.PlayerName : "";
+    playerDiv.classList.add('player-entry-manage', 'player-summary-card');
+    
+    const playerName = player ? player.PlayerName : '';
     const buyIn = player ? (player.BuyIn || 0) : 0;
-    const cashOut = player ? (player.CashOut || 0) : 0;
-    const rating = player ? player.MysteryDrinkRating : "";
-    // const isExistingPlayer = player ? true : false; // No longer needed for read-only logic
+    const finalAmount = player ? (player.FinalAmount || 0) : 0;
+    
+    // Get player avatar if it exists
+    const avatarSrc = playerName ? getPlayerImagePath(playerName) : 'knuckles.png';
+    
+    // For existing players, name is read-only. For new players, it's editable.
+    const nameInputHtml = player 
+        ? `<input type="text" class="player-name-manage" value="${playerName}" readonly style="font-size: 1.4em; font-weight: bold; background-color: var(--bg-secondary); border: none; color: var(--text-primary); width: 100%; margin: 0; padding: 0;">` 
+        : `<input type="text" class="player-name-manage new-player-name-manage" placeholder="New Player Name" required style="font-size: 1.4em; font-weight: bold; background-color: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); width: 100%; margin: 0; padding: 5px; border-radius: 4px;">`;
 
-    // Player name is always editable
-    const playerNameHTML = `<label>Player Name:</label><input type="text" class="player-name-manage" value="${playerName}" placeholder="Enter Player Name" required>`;
-
+    // Use the exact same structure as the dashboard player cards
     playerDiv.innerHTML = `
-        <div class="form-group">${playerNameHTML}</div>
-        <div class="form-group"><label>Buy-In:</label><input type="number" class="player-buyin-manage" value="${buyIn}" min="0" step="any" required></div>
-        <div class="form-group"><label>Cash-Out:</label><input type="number" class="player-cashout-manage" value="${cashOut}" min="0" step="any" required></div>
-        <div class="form-group"><label>Drink Rating (0-10):</label><input type="number" class="player-rating-manage" value="${rating}" min="0" max="10"></div>
-        <button type="button" onclick="this.parentElement.remove()" class="danger" style="font-size:0.85em; padding: 5px 8px;">Remove Player</button>
+        <div class="player-info-card">
+            <img src="${avatarSrc}" class="player-info-avatar" alt="${playerName || 'Default'} Avatar" onerror="this.onerror=null;this.src='knuckles.png';">
+            <div class="player-info-details">
+                ${nameInputHtml}
+                <div class="player-info-games" style="font-size: 0.9em; color: var(--text-secondary); margin-top: 4px;">${player ? `Existing Player` : `New Player`}</div>
+            </div>
+        </div>
+        <div class="player-metrics-grid">
+            <div class="metric-card">
+                <div class="metric-card-label">BUY-IN AMOUNT</div>
+                <input type="number" class="player-buyin-manage metric-card-value" value="${buyIn}" min="0" step="any" required style="background-color: var(--bg-tertiary); border: 1px solid var(--border-color); width: 100%; text-align: center; font-size: 1.5em; font-weight: bold; padding: 5px;">
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">FINAL AMOUNT</div>
+                <input type="number" class="player-final-amount-manage metric-card-value" value="${finalAmount}" min="0" step="any" required style="background-color: var(--bg-tertiary); border: 1px solid var(--border-color); width: 100%; text-align: center; font-size: 1.5em; font-weight: bold; padding: 5px;">
+            </div>
+        </div>
+        <button type="button" class="remove-player" onclick="this.closest('.player-entry-manage').remove(); updateAllDrinkRatingForms('manage');">Remove Player</button>
     `;
+    
     container.appendChild(playerDiv);
+    
+    // For new players, add event listener to the name input
+    if (!player) {
+        const playerNameInput = playerDiv.querySelector('.player-name-manage');
+        const playerAvatar = playerDiv.querySelector('.player-info-avatar');
+        const playerStatusText = playerDiv.querySelector('.player-info-games');
+        
+        playerNameInput.addEventListener('input', function() {
+            const enteredName = playerNameInput.value.trim();
+            const lcName = enteredName.toLowerCase();
+            
+            // Check if this is an existing player
+            if (enteredName && canonicalPlayerNameMap[lcName]) {
+                playerStatusText.textContent = "Existing Player";
+                playerAvatar.src = getPlayerImagePath(canonicalPlayerNameMap[lcName]);
+                playerAvatar.onerror = function() { this.src = 'knuckles.png'; };
+            } else {
+                playerStatusText.textContent = "New Player";
+                playerAvatar.src = 'knuckles.png';
+            }
+            
+            // Update all drink rating forms with the new name
+            updateAllDrinkRatingForms('manage');
+        });
+        
+        // If it's a new player added to the form, update drink ratings immediately
+        updateAllDrinkRatingForms('manage');
+    }
 }
 
 // --- New Function to handle changing data folder location ---
@@ -1365,10 +2437,10 @@ async function handleChangeDataFolderRequest() {
 async function resetAndReloadAppWithNewBaseDir() {
     // 1. Clear existing data and UI elements
     allWeekData = [];
-    canonicalPlayerNameMap = new Map();
+    canonicalPlayerNameMap = {};
     if (playerChartInstance) playerChartInstance.destroy();
-    if (weeklyPerformanceChartInstance) weeklyPerformanceChartInstance.destroy();
-    if (allTimePlayerProgressChartInstance) allTimePlayerProgressChartInstance.destroy();
+    if (playerPerformanceChartInstance) playerPerformanceChartInstance.destroy();
+    if (allTimePlayerNetProfitChartInstance) allTimePlayerNetProfitChartInstance.destroy();
     
     weekSelector.innerHTML = '<option value="all">All Time</option>';
     manageDataWeekSelector.innerHTML = '<option value="">Select Week to Edit</option>';
@@ -1380,9 +2452,9 @@ async function resetAndReloadAppWithNewBaseDir() {
     document.getElementById('all-time-drink-stats-container').innerHTML = '';
     managePlayerEntriesContainer.innerHTML = '<p>Select a week to see player entries.</p>'; // Reset placeholder
     manageAvatarPlayerSelector.innerHTML = '<option value="">Select Player</option>';
-    currentPlayerAvatarDisplay.src = '#';
-    currentWeekDrinkImageDisplay.src = '#';
-    editWeekDetailsForm.reset();
+    if (currentPlayerAvatarDisplay) currentPlayerAvatarDisplay.innerHTML = ''; // Check if element exists
+    if (currentWeekDrinkImageDisplay) currentWeekDrinkImageDisplay.innerHTML = ''; // Check if element exists
+    if (editWeekDetailsForm) editWeekDetailsForm.reset();
 
 
     // 2. Reload data from the new FS location (initializeApp essentials)

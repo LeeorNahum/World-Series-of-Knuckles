@@ -1,0 +1,69 @@
+{
+  "uuid": "10af7d51-fe40-4f1d-95a6-b5b179e59848",
+  "name": "Poker Week 2",
+  "date": "2025-06-08",
+  "players": [
+    {
+      "PlayerName": "Alex",
+      "BuyIn": 30,
+      "FinalAmount": 50
+    },
+    {
+      "PlayerName": "Ben",
+      "BuyIn": 30,
+      "FinalAmount": 20
+    },
+    {
+      "PlayerName": "Chloe",
+      "BuyIn": 40,
+      "FinalAmount": 60
+    },
+    {
+      "PlayerName": "David",
+      "BuyIn": 20,
+      "FinalAmount": 10
+    },
+    {
+      "PlayerName": "Emma",
+      "BuyIn": 30,
+      "FinalAmount": 5
+    },
+    {
+      "PlayerName": "Bob",
+      "BuyIn": 20,
+      "FinalAmount": 25
+    }
+  ],
+  "drinks": [
+    {
+      "drinkName": "Sprite Cranberry",
+      "playerRatings": [
+        {
+          "playerName": "Alex",
+          "rating": 8
+        },
+        {
+          "playerName": "Ben",
+          "rating": 7
+        },
+        {
+          "playerName": "Chloe",
+          "rating": 9
+        },
+        {
+          "playerName": "David",
+          "rating": 6
+        },
+        {
+          "playerName": "Emma",
+          "rating": 5
+        },
+        {
+          "playerName": "Bob",
+          "rating": 3
+        }
+      ],
+      "drinkImagePath": "drink_1.png"
+    }
+  ]
+}
