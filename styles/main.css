@@ -1463,8 +1463,33 @@ input[type="file"] {
     width: 100%;
 }
 
-/* Improve the drink entry styling to match dashboard */
-/* This is replaced by the unified drink card grid styling */
+/* Add hover effect for player-entry-manage */
+.player-entry-manage:hover {
+    background-color: var(--bg-tertiary) !important;
+}
+
+/* Prevent background color change for existing player input on parent hover */
+.player-entry-manage:hover .player-name-manage:not(.new-player-name-manage) {
+    background-color: transparent !important;
+}
+
+/* Prevent focus on readonly input fields and style them properly */
+input[readonly] {
+    pointer-events: none; /* Prevents clicking/focusing */
+    user-select: none; /* Prevents text selection */
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+/* Fix focus outline for input fields in Manage Data section */
+.player-entry-manage .player-name-manage:focus {
+    outline: none;
+    border-color: var(--knuckles-yellow-accent) !important;
+    box-shadow: 0 0 0 2px rgba(255, 195, 0, 0.3) !important;
+    padding: 5px !important; /* Ensure consistent padding when focused */
+    border-radius: 4px !important; /* Ensure border-radius is applied */
+}
 
 /* Style the drink name input */
 .drink-name-input {
@@ -1751,4 +1776,4 @@ input[type="text"], input[type="number"], input[type="file"], input[type="date"]
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100%;
-} 
+        } 

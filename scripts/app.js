@@ -1040,18 +1040,9 @@ function renderDashboardUI(selectedGameUUID = "all") { // Parameter renamed
         renderPlayerList(selectedGameUUID); 
         renderAllTimeDrinkStats(); 
 
-        const currentDetailedPlayer = playerDetailNameEl.textContent;
-        if(currentDetailedPlayer && document.getElementById('player-list').querySelector(`[data-player-name="${currentDetailedPlayer}"]`)) {
-            const { players: aggregatedPlayerStatsAllTime } = getAggregatedStatsForContext("all");
-            if (aggregatedPlayerStatsAllTime[currentDetailedPlayer.toLowerCase()]) {
-                showPlayerDetails(currentDetailedPlayer, "all"); 
-            } else {
-                 playerDetailsSection.style.display = 'none';
-            }
-        } else {
-             playerDetailsSection.style.display = 'none';
-        }
-        if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = playerDetailsSection.style.display === 'block' ? 'block' : 'none';
+        // Player detail section always hidden now
+        playerDetailsSection.style.display = 'none';
+        if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = 'none';
 
     } else { // Specific game selected
         if (allTimePlayerNetProfitChartContainer) allTimePlayerNetProfitChartContainer.style.display = 'none';
@@ -1111,7 +1102,7 @@ function renderPlayerList(selectedGameUUID = "all") { // Parameter renamed, sear
         let gamesPlayedDisplay = playerData.gamesPlayed;
 
         if (selectedGameUUID === "all") { // Renamed selectedSessionUUID
-            playerDiv.onclick = () => showPlayerDetails(canonicalName, "all");
+            // Player click functionality removed
             
             let avgProfitPercentValue = playerData.averageProfitPercentage;
             let avgProfitPercentClass = (avgProfitPercentValue || 0) > 0 ? 'profit' : (avgProfitPercentValue || 0) < 0 ? 'loss' : 'neutral';
@@ -1180,220 +1171,11 @@ function renderPlayerList(selectedGameUUID = "all") { // Parameter renamed, sear
     });
 }
 
-function showPlayerDetails(canonicalPlayerName, selectedGameUUID = "all") { // Renamed selectedSessionUUID
-    if (selectedGameUUID !== "all") { // Renamed selectedSessionUUID
-        playerDetailsSection.style.display = 'none';
-        if (document.getElementById('player-chart-container')) document.getElementById('player-chart-container').style.display = 'none';
-        return;
-    }
-
-    const { players: aggregatedPlayerStats } = getAggregatedStatsForContext(selectedGameUUID);
-    const lcPlayerName = canonicalPlayerName.toLowerCase();
-    const playerData = aggregatedPlayerStats[lcPlayerName];
-    const playerChartSpecificContainer = document.getElementById('player-chart-container');
-
-    if (!playerData) {
-        playerDetailsSection.style.display = 'none';
-        if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = 'none'; 
-        console.warn(`No data for player ${canonicalPlayerName} (lc: ${lcPlayerName}) in context ${selectedGameUUID}`); // Use renamed param
-        return;
-    }
-
-    playerDetailsSection.style.display = 'block';
-    const contextText = "All Time"; 
-    
-    // Update main player info section to reflect new design
-    const playerDetailHeader = document.getElementById('player-detail-header'); 
-    if (playerDetailHeader) {
-        playerDetailHeader.innerHTML = `
-            <div class="player-info-card" style="display: flex; align-items: center; margin-bottom: 20px; background: var(--background-card); padding: 15px; border-radius: 8px;">
-                <img src="${getPlayerImagePath(canonicalPlayerName)}" class="player-info-avatar" alt="${canonicalName}" onerror="this.onerror=null;this.src='knuckles.png';" style="width: 80px; height: 80px; border-radius: 50%; margin-right: 20px;">
-                <div class="player-info-details">
-                    <div class="player-info-name" style="font-size: 1.8em; font-weight: bold;">${canonicalName}</div>
-                    <div class="player-info-games" style="font-size: 1em; color: var(--text-secondary);">Games: ${playerData.gamesPlayed} (${contextText})</div>
-                </div>
-            </div>
-        `;
-    } else { // Fallback to old elements if new header container isn't there
-    playerDetailNameEl.textContent = canonicalPlayerName;
-        playerDetailContextEl.textContent = contextText + ` (Games: ${playerData.gamesPlayed})`; // Label updated
-    playerDetailAvatarEl.src = getPlayerImagePath(canonicalPlayerName);
-    playerDetailAvatarEl.onerror = () => { playerDetailAvatarEl.src = 'knuckles.png'; };
-    }
-
-
-    const winPercentage = playerData.gamesPlayed > 0 ? (playerData.wins / playerData.gamesPlayed * 100).toFixed(1) : 0;
-    const avgNetPerGame = playerData.gamesPlayed > 0 ? (playerData.netProfit / playerData.gamesPlayed) : 0;
-    
-    const netProfitClass = playerData.netProfit > 0 ? 'profit' : playerData.netProfit < 0 ? 'loss' : 'neutral';
-    const avgNetClass = avgNetPerGame > 0 ? 'profit' : avgNetPerGame < 0 ? 'loss' : 'neutral';
-    const avgProfitPercentClass = (playerData.averageProfitPercentage || 0) > 0 ? 'profit' : (playerData.averageProfitPercentage || 0) < 0 ? 'loss' : 'neutral';
-    if (playerData.averageProfitPercentage === null || !isFinite(playerData.averageProfitPercentage)) avgProfitPercentClass = 'neutral';
-
-    
-    playerSpecificStatsContainer.innerHTML = `
-        <div class="player-metrics-grid">
-            <div class="metric-card">
-                <div class="metric-card-label">Total Buy-In</div>
-                <div class="metric-card-value">${formatCurrency(playerData.totalBuyIn)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-card-label">Total Final Amount</div>
-                <div class="metric-card-value">${formatCurrency(playerData.totalFinalAmount)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-card-label">Net Profit/Loss</div>
-                <div class="metric-card-value ${netProfitClass}">${formatCurrency(playerData.netProfit)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-card-label">Win % (Net > 0)</div>
-                <div class="metric-card-value">${winPercentage}%</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-card-label">Avg. Net/Game</div>
-                <div class="metric-card-value ${avgNetClass}">${formatCurrency(avgNetPerGame)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-card-label">Net Avg. Profit Percentage</div>
-                <div class="metric-card-value ${avgProfitPercentClass}">${formatPercentage(playerData.averageProfitPercentage)}</div>
-            </div>
-        </div>
-    `;
-    // Games Played is now part of the header, so no separate card for it.
-    
-    if(playerChartSpecificContainer) playerChartSpecificContainer.style.display = 'block';
-    renderPlayerChart(canonicalPlayerName, selectedGameUUID, playerData.gameHistory); // Use renamed param
-    
-    renderPlayerGamesTable(canonicalPlayerName, selectedGameUUID); // Use renamed param
-    
-    // These might not be needed if playerDetailHeader is used comprehensively
-    playerDetailNameGamesEl.textContent = canonicalPlayerName;
-    playerDetailGamesContextEl.textContent = contextText;
-    playerDetailsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+// Player details function removed - deprecated functionality
         
-function renderPlayerChart(canonicalPlayerName, selectedGameUUID, gameHistoryForChart) { // Parameter renamed
-    if (playerChartInstance) playerChartInstance.destroy();
-    if (!gameHistoryForChart || gameHistoryForChart.length === 0) {
-        document.getElementById('player-chart').style.display = 'none';
-        return;
-    }
-    document.getElementById('player-chart').style.display = 'block';
+// Player chart function removed - deprecated functionality
 
-    const labels = gameHistoryForChart.map(game => game.gameLabel); // Changed from sessionId to gameLabel
-    const dataPoints = gameHistoryForChart.map(game => game.net);
-    
-    let cumulativeNet = 0;
-    const cumulativeDataPoints = dataPoints.map(net => {
-        cumulativeNet += net;
-        return cumulativeNet;
-    });
-
-    const chartCtx = document.getElementById('player-chart').getContext('2d');
-    playerChartInstance = new Chart(chartCtx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Net Winnings per Game', data: dataPoints,
-                borderColor: 'rgba(220, 53, 69, 0.8)', backgroundColor: 'rgba(220, 53, 69, 0.2)',
-                tension: 0.1, fill: true, yAxisID: 'yNet'
-            },{
-                label: 'Cumulative Net Winnings', data: cumulativeDataPoints,
-                borderColor: 'rgba(255, 193, 7, 0.8)', backgroundColor: 'rgba(255, 193, 7, 0.1)',
-                tension: 0.1, fill: false, yAxisID: 'yCumulative'
-            }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { 
-                tooltip: { 
-                    callbacks: { 
-                        label: function(context) { 
-                            let label = context.dataset.label || ''; 
-                            if (label) label += ': '; 
-                            if (context.parsed.y !== null) label += formatCurrency(context.parsed.y); 
-                            if (context.dataset.label === 'Net Winnings per Game' && gameHistoryForChart[context.dataIndex]) { 
-                                const gameData = gameHistoryForChart[context.dataIndex]; 
-                                label += ` (Buy: ${formatCurrency(gameData.buyIn)}, Final Amount: ${formatCurrency(gameData.finalAmount)}, Profit Percentage: ${formatPercentage(gameData.profitPercentage)})`;
-                            } 
-                            return label; 
-                        } 
-                    }
-                }
-            },
-            scales: { 
-                x: { ticks: { color: 'rgba(230, 230, 230, 0.9)' }, grid: { color: 'rgba(100, 100, 100, 0.3)' } }, 
-                yNet: { position: 'left', beginAtZero: false, ticks: { color: 'rgba(230, 230, 230, 0.9)', callback: function(value) { return formatCurrency(value); }}, grid: { color: 'rgba(100, 100, 100, 0.3)' } }, 
-                yCumulative: { position: 'right', beginAtZero: false, ticks: { color: 'rgba(230, 230, 230, 0.9)', callback: function(value) { return formatCurrency(value); }}, grid: { drawOnChartArea: false } } 
-            },
-            interaction: { mode: 'index', intersect: false }
-        }
-    });
-}
-
-function renderPlayerGamesTable(canonicalPlayerName, selectedGameUUID = "all") { // Parameter renamed
-    const relevantWeeks = selectedGameUUID === "all"  // Renamed selectedSessionUUID
-        ? allWeekData 
-        : allWeekData.filter(w => w.uuid === selectedGameUUID); // Renamed selectedSessionUUID
-    let playerGames = [];
-
-    relevantWeeks.forEach(week => {
-        week.players.forEach(p => {
-            if (p.PlayerName.toLowerCase() === canonicalPlayerName.toLowerCase()) { 
-                playerGames.push({
-                    SessionName: week.name, // This is effectively Game Name now
-                    Date: week.date,
-                    BuyIn: p.BuyIn, FinalAmount: p.FinalAmount,
-                    Net: (p.FinalAmount || 0) - (p.BuyIn || 0),
-                    // MysteryDrinkName: week.weekMysteryDrinkName, // Removed
-                    // MysteryDrinkRating: p.MysteryDrinkRating, // Removed
-                    sessionUUID: week.uuid
-                });
-            }
-        });
-    });
-    playerGames.sort((a,b) => new Date(a.Date) - new Date(b.Date));
-
-    if (playerGames.length === 0) {
-        playerGamesTableContainer.innerHTML = "<p style='text-align:center; color: var(--text-secondary);'>No games played by this player in this context.</p>";
-        return;
-    }
-    
-    // Fetch profitPercentage for each game for the table
-    const { players: aggregatedStatsAllGames } = getAggregatedStatsForContext("all"); 
-    const lcCanonicalPlayerName = canonicalPlayerName.toLowerCase();
-
-    let tableHTML = '<table><thead><tr><th>Game</th><th>Date</th><th>Buy-In</th><th>Final Amount</th><th>Net</th><th>Profit Percentage</th></tr></thead><tbody>'; // Removed Drink columns
-    playerGames.forEach(record => {
-        let netClass = record.Net > 0 ? 'profit' : record.Net < 0 ? 'loss' : 'neutral';
-        
-        // Find the specific game in the full history to get its profitPercentage
-        let gameProfitPercentage = null;
-        if (aggregatedStatsAllGames[lcCanonicalPlayerName] && aggregatedStatsAllGames[lcCanonicalPlayerName].gameHistory) {
-            const gameDetail = aggregatedStatsAllGames[lcCanonicalPlayerName].gameHistory.find(
-                gh => gh.sessionUUID === record.sessionUUID // Assuming record has sessionUUID
-            );
-            if (gameDetail) {
-                gameProfitPercentage = gameDetail.profitPercentage;
-            }
-        }
-
-        let profitPercentClass = (gameProfitPercentage || 0) > 0 ? 'profit' : (gameProfitPercentage || 0) < 0 ? 'loss' : 'neutral';
-        if (gameProfitPercentage === null || !isFinite(gameProfitPercentage)) profitPercentClass = 'neutral';
-
-        tableHTML += '<tr>';
-        tableHTML +=   '<td>' + record.SessionName + '</td>';
-        tableHTML +=   '<td>' + record.Date + '</td>';
-        tableHTML +=   '<td>' + formatCurrency(record.BuyIn) + '</td>';
-        tableHTML +=   '<td>' + formatCurrency(record.FinalAmount) + '</td>';
-        tableHTML +=   '<td class="' + netClass + '">' + formatCurrency(record.Net) + '</td>';
-        tableHTML +=   '<td class="' + profitPercentClass + '">' + formatPercentage(gameProfitPercentage) + '</td>';
-        tableHTML += '</tr>';
-    });
-    tableHTML += '</tbody></table>';
-    playerGamesTableContainer.innerHTML = tableHTML;
-}
+// Player games table function removed - deprecated functionality
 
 async function renderDrinkStatsForGame(selectedGameUUID) { // Renamed from renderDrinkStatsForWeek
     const gameData = allWeekData.find(g => g.uuid === selectedGameUUID);
